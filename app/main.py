@@ -8,7 +8,6 @@ from app.core.exception_handlers import register_exception_handlers
 from app.api.offers import router as offers_router
 from app.events.broker import extract_broker, scrape_broker
 from app.events.subscriber import handle_extract_event, handle_scrape_event
-from app.scheduler.runner import start_scheduler, stop_scheduler
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,9 +21,7 @@ async def lifespan(app: FastAPI):
     extract_broker.subscribe(handle_extract_event)
     scrape_broker.start()
     extract_broker.start()
-    start_scheduler()
     yield
-    stop_scheduler()
     scrape_broker.stop()
     extract_broker.stop()
 

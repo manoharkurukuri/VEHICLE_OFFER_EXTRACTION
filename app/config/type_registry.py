@@ -35,7 +35,6 @@ class TypeConfig:
 
 
 def _build_registry() -> dict[OfferType, TypeConfig]:
-    # Imported lazily to avoid a circular import (processors import config).
     from app.processors.certified_inventory_processor import CertifiedInventoryProcessor
     from app.processors.new_inventory_processor import NewInventoryProcessor
     from app.processors.offer_to_purchase_processor import OfferToPurchaseProcessor
@@ -84,8 +83,6 @@ def get_response_schema(offer_type: str | OfferType) -> type[BaseModel]:
     return get_type_config(offer_type).response_schema
 
 
-# Processor instances are cached so the LLM key pool + compiled graph are reused
-# across requests for the same type.
 @lru_cache
 def _shared_service():
     from app.service.offer_generation_service import OfferGenerationService

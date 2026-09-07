@@ -33,9 +33,6 @@ _USER_AGENT = (
     "Chrome/126.0.0.0 Safari/537.36"
 )
 
-# Chromium flags required to run headless Chromium inside the Lambda sandbox,
-# where there is no GPU, limited /dev/shm, and only /tmp is writable.
-# --single-process/--no-zygote crash desktop Chromium, so they are Lambda-only.
 _LAMBDA_CHROMIUM_ARGS = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
@@ -46,7 +43,6 @@ _LAMBDA_CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
 ]
 
-# Safe flags for running headless Chromium on a normal desktop/server.
 _DESKTOP_CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
 ]
@@ -74,7 +70,6 @@ def _is_challenge(html: str) -> bool:
     return any(marker in lowered for marker in _BLOCK_MARKERS)
 
 
-# Buttons/links that hide the real offer terms behind a modal or accordion.
 _DETAIL_TRIGGER_RE = re.compile(
     r"(see\s+(offer\s+)?details|view\s+(disclaimer|details|offer|terms)"
     r"|disclaimer|details|terms|full\s+offer|offer\s+details|show\s+more)",
@@ -87,7 +82,6 @@ def _expand_and_collect_details(page) -> None:
     (pricing, disclaimers, due-at-signing, etc.) are revealed into the DOM."""
     collected: list[str] = []
 
-    # 1. Modal-opening buttons (safe: no page navigation).
     try:
         triggers = page.get_by_role("button", name=_DETAIL_TRIGGER_RE)
         count = min(triggers.count(), 25)
@@ -117,7 +111,6 @@ def _expand_and_collect_details(page) -> None:
                 pass
             continue
 
-    # 2. Collapsed accordions/expanders (in-page, no navigation).
     try:
         toggles = page.locator("[aria-expanded='false']")
         for i in range(min(toggles.count(), 30)):
@@ -129,7 +122,6 @@ def _expand_and_collect_details(page) -> None:
     except Exception:
         pass
 
-    # Inject collected modal text so it survives page.content() extraction.
     if collected:
         joined = "\n\n".join(dict.fromkeys(collected))
         try:
@@ -178,8 +170,6 @@ def _collect_iframe_text(page) -> None:
         pass
 
 
-# Truthy when the page shows real vehicle/offer content (cards or pricing terms)
-# rather than a loading spinner or a "no results" placeholder.
 _OFFER_READY_JS = r"""
 () => {
     const text = document.body ? document.body.innerText : '';
@@ -194,8 +184,6 @@ _OFFER_READY_JS = r"""
 }
 """
 
-# Times to reload a page whose flaky inventory AJAX returned the empty "no
-# results" placeholder, retrying until the real offer cards render.
 _MAX_OFFER_RELOADS = 3
 
 
@@ -224,17 +212,8 @@ def _load_dynamic_content(page) -> None:
     except Exception:
         pass
 
-    # Many dealer specials pages (e.g. DealerInspire) ship a "no results"
-    # placeholder and swap in the vehicle/offer cards a few seconds later via an
-    # AJAX call. Wait for that real offer content to appear instead of guessing
-    # with a fixed sleep, so we don't extract the empty placeholder.
     _wait_for_offer_content(page, timeout_ms=25000)
 
-    # The inventory AJAX (e.g. DealerInspire's Algolia-powered results) is flaky
-    # and often returns the empty "no results" placeholder on some loads. Reload
-    # and wait again, up to a few times, until the real offer cards appear. Clear
-    # cookies each retry so the site treats it as a fresh visitor, which can get
-    # past a session that got stuck on "no results".
     reloads = 0
     while not _offers_present(page) and reloads < _MAX_OFFER_RELOADS:
         reloads += 1
@@ -249,7 +228,6 @@ def _load_dynamic_content(page) -> None:
             pass
         _wait_for_offer_content(page, timeout_ms=25000)
 
-    # Many dealer specials pages lazy-load offer cards on scroll.
     try:
         for _ in range(8):
             page.mouse.wheel(0, 2200)
@@ -259,10 +237,8 @@ def _load_dynamic_content(page) -> None:
     except Exception:
         pass
 
-    # Scrolling can trigger a second batch of cards; give them a chance too.
     _wait_for_offer_content(page, timeout_ms=8000)
 
-    # Reveal details hidden behind buttons/modals/accordions.
     _expand_and_collect_details(page)
 
     try:
@@ -270,7 +246,6 @@ def _load_dynamic_content(page) -> None:
     except Exception:
         pass
 
-    # Pull in offers that render inside iframes after everything has settled.
     _collect_iframe_text(page)
 
 
@@ -383,8 +358,6 @@ def get_website_content_from_url(url: str) -> dict[str, str]:
             else ""
         )
 
-        # Drop chrome so the body focuses on offer content, while still
-        # including modal/dialog/disclaimer text that lives outside <main>.
         for tag in soup(["header", "footer", "nav"]):
             tag.decompose()
 

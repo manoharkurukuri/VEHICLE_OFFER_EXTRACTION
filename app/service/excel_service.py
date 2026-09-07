@@ -52,7 +52,6 @@ class ExcelService:
         if file_stem:
             return f"{self._slugify(file_stem)}.xlsx"
         dealer = self._slugify(dealer_name)
-        # Example: norm_reeves_honda_irvine_august_11_tuesday.xlsx
         return f"{dealer}_{local_now.strftime('%B_%d_%A').lower()}.xlsx"
 
     @staticmethod
@@ -109,7 +108,6 @@ class ExcelService:
                     )
                     cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-            # One data row per offer (no cap); header is row 1.
             last_row = len(incentives) + 1
             currency_columns = [12, 13, 16, 17, 21, 22, 23]
             for column_index in currency_columns:
@@ -148,7 +146,6 @@ class ExcelService:
                 vehicle_type_validation.add(f"D2:D{last_row}")
                 payment_type_validation.add(f"O2:O{last_row}")
 
-                # Basic review highlight for an impossible negative finance rate if a user edits it later.
                 worksheet.conditional_formatting.add(
                     f"S2:S{last_row}",
                     CellIsRule(

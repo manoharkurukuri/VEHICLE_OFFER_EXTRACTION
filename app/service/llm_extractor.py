@@ -13,8 +13,6 @@ from app.schemas.llm import OfferExtractionResponse
 
 logger = get_logger(__name__)
 
-# Backwards-compatible alias: the Sales Specials prompt used to live in this
-# module. It now lives in ``app.prompts.sales_specials`` and is re-exported here.
 SALES_SPECIALS_SYSTEM_PROMPT = SYSTEM_PROMPT
 
 T = TypeVar("T", bound=BaseModel)

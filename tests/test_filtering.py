@@ -22,7 +22,6 @@ def _make_workbook(path):
 @pytest.fixture
 def service(monkeypatch):
     svc = OfferGenerationService()
-    # Avoid any network: pretend every URL scrapes to a fixed body.
     monkeypatch.setattr(svc, "_scrape_url", lambda url: (url, "body-text", None))
     return svc
 
@@ -34,9 +33,8 @@ def _dealer_ids(payloads):
 def test_default_processes_only_sales_specials(tmp_path, service):
     wb = tmp_path / "in.xlsx"
     _make_workbook(wb)
-    _, payloads = service.scrape_dealers(wb)  # default = sales_specials
+    _, payloads = service.scrape_dealers(wb)
     assert _dealer_ids(payloads) == {"D1"}
-    # Only the Sales Specials row for D1, not its Service Specials row.
     d1 = next(p for p in payloads if p["dealer_id"] == "D1")
     assert len(d1["urls"]) == 1
     assert d1["offer_type"] == "sales_specials"
@@ -54,7 +52,6 @@ def test_explicit_type_filters_rows(tmp_path, service):
 def test_unsupported_rows_are_skipped_not_failed(tmp_path, service):
     wb = tmp_path / "in.xlsx"
     _make_workbook(wb)
-    # Homepage/Contact Us/Map must never produce dealers and must not raise.
     _, payloads = service.scrape_dealers(wb, offer_type=OfferType.SERVICE_SPECIALS)
     assert _dealer_ids(payloads) == {"D1"}
 
@@ -68,7 +65,7 @@ def test_status_false_dealers_are_excluded(tmp_path, service):
         ]
     )
     df.to_excel(wb, index=False)
-    _, payloads = service.scrape_dealers(wb)  # default = sales_specials
+    _, payloads = service.scrape_dealers(wb)
     assert _dealer_ids(payloads) == {"D1"}
 
 

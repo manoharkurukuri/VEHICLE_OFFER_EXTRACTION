@@ -41,7 +41,6 @@ def test_used_inventory_output_isolated_to_its_own_dir():
     assert result.zip_path is not None
     assert "/used_inventory/zip/" in result.zip_path.replace("\\", "/")
     assert "sales_specials" not in result.zip_path
-    # The zip contains the serialized JSON records.
     with zipfile.ZipFile(result.zip_path) as archive:
         names = archive.namelist()
     assert any(name.endswith(".json") for name in names)

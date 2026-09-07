@@ -135,7 +135,6 @@ class OfferGenerationService:
                 f"Input workbook is missing required columns: {sorted(missing)}"
             )
 
-        # Keep only active dealers (status == True). Absent column => keep all rows.
         if "status" in df.columns:
             active_mask = df["status"].map(_is_active_status)
             disabled_count = int((~active_mask).sum())
@@ -150,8 +149,6 @@ class OfferGenerationService:
         type_series = df["type"].astype(str)
         matching = df[type_series.str.strip().str.casefold() == target_label.casefold()]
 
-        # Log any rows we intentionally skip (unsupported/ignored types) so a
-        # workbook with mixed rows never fails the job silently.
         skipped = type_series[
             type_series.str.strip().str.casefold() != target_label.casefold()
         ]
@@ -213,8 +210,6 @@ class OfferGenerationService:
             }
 
         if rows:
-            # De-duplicate scraping by URL: OEMs that share a URL are scraped once
-            # and reuse the same body, so identical URLs never diverge.
             url_to_rows: dict[str, list[tuple[int, str, str, str, str, str]]] = {}
             for row in rows:
                 url_to_rows.setdefault(row[5], []).append(row)
@@ -240,8 +235,6 @@ class OfferGenerationService:
                     scraped.setdefault(key, []).append((index, entry))
                     remaining[key] -= 1
                     if remaining[key] == 0:
-                        # All of this dealer's URLs are scraped: emit it now so
-                        # stage C can extract while other dealers keep scraping.
                         payload = _dealer_payload(*key)
                         ready[key] = payload
                         if on_dealer_ready is not None:
@@ -289,7 +282,6 @@ class OfferGenerationService:
             dealer_id,
             len(payload["urls"]),
         )
-        # Cache extraction per URL so OEMs sharing a URL get the same offers.
         cache: dict[str, tuple[list[Any], int] | Exception] = {}
         results = [
             self._extract_one(index, dealer_id, dealer_name, entry, date_token, cache)
@@ -324,7 +316,6 @@ class OfferGenerationService:
                 error_message=f"URL: {url}\nOEM: {oem}\nError: {scrape_error}",
             )
 
-        # Extract once per URL; reuse the offers for other OEMs with the same URL.
         cached = cache.get(url)
         if cached is None:
             try:
@@ -399,7 +390,6 @@ class OfferGenerationService:
     ) -> DealerZipResult:
         workbooks: list[tuple[str, bytes]] = []
         offer_counts: dict[str, int] = {}
-        # Per-URL failures/empty results, combined into one dealer error .txt file.
         error_sections: list[str] = []
         errors: dict[str, str] = {}
 

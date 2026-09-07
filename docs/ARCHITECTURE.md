@@ -4,8 +4,8 @@ This document explains how the offer-generation pipeline works end to end, from
 the HTTP request to the per-dealer Excel zip written on disk.
 
 > **Multi-type note:** the pipeline now supports multiple offer types (default
-> `sales_specials`). Type resolution, routing, per-type prompts/schemas/output
-> folders, and schedulers are documented in the top-level [README](../README.md).
+> `sales_specials`). Type resolution, routing, and per-type prompts/schemas/output
+> folders are documented in the top-level [README](../README.md).
 > The stages below describe the shared mechanics, which are identical for every
 > type; only the Excel filter label, prompt/schema, and output subfolder change
 > per type. Outputs are written under `storage/offers/<type>/{zip,errors}/`.

@@ -15,7 +15,6 @@ router = APIRouter(prefix=f"{settings.api_v1_prefix}/offers", tags=["offers"])
 
 
 class ProcessRequest(BaseModel):
-    # Optional: defaults to sales_specials when omitted.
     type: str | None = None
     path: str | None = None
 

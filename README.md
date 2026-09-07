@@ -1,37 +1,41 @@
 # Vehicle Offer Extraction
 
 Scrapes automobile-dealer web pages, extracts structured offers with an LLM, and
-packages the results per dealer. The pipeline supports **multiple offer types**;
-`sales_specials` is the default and its behavior is unchanged from the original
-implementation.
+packages the results per dealer. The service is driven entirely through a
+**FastAPI HTTP API**. The pipeline is built around **multiple offer types**;
+`sales_specials` is the default and the only one currently **active**.
 
 - [Supported types](#supported-types)
 - [How to start](#how-to-start)
 - [API / curl](#api--curl)
-- [CLI](#cli)
-- [Schedulers & timers](#schedulers--timers)
+- [How the code flows](#how-the-code-flows)
+- [Single-run lock](#single-run-lock)
 - [Parallel processing](#parallel-processing)
 - [Output layout](#output-layout)
+- [Adding a new offer type](#adding-a-new-offer-type)
 - [Diagrammatic flow](#diagrammatic-flow)
-- [Adding a new type](#adding-a-new-offer-type)
 - [Tests](#tests)
 
 ---
 
 ## Supported types
 
+Only **active** types accept requests; a request for an inactive type is rejected
+with **HTTP 403** (`service_not_active`). Activation is controlled per type via
+env flags (see [`.env.example`](.env.example)).
+
 | Internal value | Excel `type` label | Status |
 |----------------|--------------------|--------|
-| `sales_specials` *(default)* | Sales Specials | ✅ production |
-| `service_specials` | Service Specials | 🧪 placeholder prompt/schema |
-| `schedule_service` | Schedule Service | 🧪 placeholder prompt/schema |
-| `new_inventory` | New Inventory | 🧪 placeholder prompt/schema |
-| `certified_inventory` | Certified Inventory | 🧪 placeholder prompt/schema |
-| `used_inventory` | Used Inventory | 🧪 placeholder prompt/schema |
-| `offer_to_purchase` | Offer To Purchase | 🧪 placeholder prompt/schema |
+| `sales_specials` *(default)* | Sales Specials | ✅ **active** |
+| `service_specials` | Service Specials | ⛔ inactive |
+| `schedule_service` | Schedule Service | ⛔ inactive |
+| `new_inventory` | New Inventory | ⛔ inactive |
+| `certified_inventory` | Certified Inventory | ⛔ inactive |
+| `used_inventory` | Used Inventory | ⛔ inactive |
+| `offer_to_purchase` | Offer To Purchase | ⛔ inactive |
 
-Rows whose `type` is **`Homepage`**, **`Contact Us`**, or **`Map`** are skipped
-(logged, never fail the job). When no type is supplied anywhere, the app defaults
+Rows whose Excel `type` is **`Homepage`**, **`Contact Us`**, or **`Map`** are
+skipped (logged, never fail the job). When no type is supplied, the app defaults
 to `sales_specials`.
 
 ---
@@ -41,8 +45,8 @@ to `sales_specials`.
 ### 1. Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium   # one-time: browser for scraping
 ```
@@ -52,7 +56,8 @@ playwright install chromium   # one-time: browser for scraping
 ```bash
 # One or more Gemini keys (comma-separated). Each concurrent LLM call uses a
 # distinct key to spread load past a single key's rate limit.
-GEMINI_API_KEYS=key1,key2,key3,key4,key5
+GEMINI_API_KEY=your-gemini-api-key-here
+# GEMINI_API_KEYS=key1,key2,key3,key4,key5
 
 # Optional overrides (defaults shown)
 SCRAPER_MAX_WORKERS=5
@@ -60,8 +65,14 @@ DEALER_EXTRACT_WORKERS=5
 LOCAL_STORAGE_DIR=./storage/offers
 DEFAULT_EXCEL_PATH=offers/MWK00012GMC_Dealership_URLs.xlsx
 
-# Scheduler (off by default)
-SCHEDULER_ENABLED=false
+# Service activation (only sales_specials is on)
+sales_specials=true
+service_specials=false
+schedule_service=false
+new_inventory=false
+certified_inventory=false
+used_inventory=false
+offer_to_purchase=false
 ```
 
 ### 3. Run the API
@@ -77,25 +88,16 @@ Interactive docs: `http://localhost:8000/docs`
 
 ## API / curl
 
-The API returns immediately (`202`-style "processing"); scraping + extraction run
-on background workers. Output is written under `storage/offers/<type>/`.
+The API returns immediately (`processing`); scraping + extraction run on
+background workers. Output is written under `storage/offers/<type>/`.
 
-### Process a specific type
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/offers/process" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "service_specials",
-    "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx"
-  }'
-```
+### Process the active type (`sales_specials`)
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/offers/process" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "used_inventory",
+    "type": "sales_specials",
     "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx"
   }'
 ```
@@ -110,21 +112,30 @@ curl -X POST "http://localhost:8000/api/v1/offers/process" \
   }'
 ```
 
-### One curl per supported type
+Success response:
 
-```bash
-BASE="http://localhost:8000/api/v1/offers/process"
-FILE="/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx"
-
-for T in sales_specials service_specials schedule_service new_inventory \
-         certified_inventory used_inventory offer_to_purchase; do
-  curl -X POST "$BASE" -H "Content-Type: application/json" \
-    -d "{\"type\": \"$T\", \"path\": \"$FILE\"}"
-  echo
-done
+```json
+{
+  "status": "processing",
+  "message": "Your request has been accepted and is being processed. Offers will be generated in a few minutes.",
+  "offer_type": "sales_specials",
+  "excel_path": "offers/example.xlsx"
+}
 ```
 
-### Invalid type → clear validation error (HTTP 400)
+### Inactive type → HTTP 403 (`service_not_active`)
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/offers/process" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "used_inventory", "path": "x.xlsx"}'
+```
+```json
+{"error":{"code":"service_not_active",
+  "message":"The 'used_inventory' service is not active."}}
+```
+
+### Invalid type → HTTP 400 (`unsupported_offer_type`)
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/offers/process" \
@@ -136,99 +147,84 @@ curl -X POST "http://localhost:8000/api/v1/offers/process" \
   "message":"Unsupported offer type: homepage. Supported types are: sales_specials, service_specials, schedule_service, new_inventory, certified_inventory, used_inventory, offer_to_purchase."}}
 ```
 
+### Run already in progress → HTTP 409 (`offer_run_in_progress`)
+
+```json
+{"error":{"code":"offer_run_in_progress",
+  "message":"An offer-generation run for 'sales_specials' is currently running. Please wait until it completes before starting another."}}
+```
+
 ### List supported types
 
 ```bash
 curl "http://localhost:8000/api/v1/offers/types"
 ```
+```json
+{"supported":["sales_specials","service_specials","schedule_service","new_inventory","certified_inventory","used_inventory","offer_to_purchase"],"default":"sales_specials"}
+```
 
 ### Backwards-compatible endpoint
 
-The original `GET /generate` still works and defaults to `sales_specials`:
+`GET /generate` still works and defaults to `sales_specials`:
 
 ```bash
 curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/example.xlsx"
-curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/example.xlsx&type=used_inventory"
+curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/example.xlsx&type=sales_specials"
 ```
 
 ---
 
-## CLI
+## How the code flows
 
-Runs one type end-to-end synchronously (no API/broker needed).
+End to end, a single request travels through three stages (A → B → C):
 
-```bash
-# Specific type
-python main.py --type service_specials \
-  --path /Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx
+1. **A — Request (`app/api/offers.py`)**
+   - `POST /api/v1/offers/process` (or `GET /generate`) receives `{type?, path?}`.
+   - `normalize_offer_type()` resolves the type (defaulting to `sales_specials`);
+     an unknown value raises `UnsupportedOfferTypeError` (**400**).
+   - `settings.is_service_active()` rejects an inactive type with
+     `ServiceNotActiveError` (**403**).
+   - `run_lock.acquire()` enforces one run at a time; a busy lock raises
+     `OfferRunInProgressError` (**409**).
+   - On success it publishes `{excel_path, offer_type}` to the **scrape broker**
+     and returns `processing` immediately.
 
-# Default type (sales_specials)
-python main.py --path /Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx
+2. **B — Scrape (`app/events/subscriber.py::handle_scrape_event`)**
+   - A single background worker picks up the event, resolves the processor via
+     `type_registry.get_processor()`, and calls `processor.scrape()`.
+   - The Excel workbook is read and filtered by the type's Excel label
+     (`Homepage` / `Contact Us` / `Map` rows are skipped).
+   - Dealer URLs are scraped in parallel (`SCRAPER_MAX_WORKERS`). As each
+     dealer's URLs finish, that dealer is published to the **extract broker**, so
+     extraction overlaps with remaining scraping.
 
-# Legacy positional path still works (defaults to sales_specials)
-python main.py offers/example.xlsx
-```
+3. **C — Extract (`app/events/subscriber.py::handle_extract_event`)**
+   - Multiple workers (`DEALER_EXTRACT_WORKERS`) each handle one dealer.
+   - The processor runs the type's **prompt + response schema** through the LLM
+     (`app/service/llm_extractor.py`), formats results, and writes a per-dealer
+     ZIP (and an error file for failures) under `storage/offers/<type>/`.
+   - When the last dealer completes, the run's total duration is logged and
+     `run_lock` is released so the next request can start.
 
----
-
-## Schedulers & timers
-
-APScheduler runs **in-process**, started automatically by the FastAPI app on
-`uvicorn` startup, and is **off by default**. Enable it with
-`SCHEDULER_ENABLED=true` (then restart `uvicorn`). Each type has its own cron
-job that publishes a scrape event for that type against `DEFAULT_EXCEL_PATH`.
-
-Each type runs **once a month on the 5th**, staggered to a different hour.
-
-| Offer type | Default cron | Time | Env override |
-|------------|--------------|------|--------------|
-| `sales_specials` | `0 1 5 * *` | 5th @ 01:00 | `SCHEDULE_SALES_SPECIALS` |
-| `service_specials` | `0 2 5 * *` | 5th @ 02:00 | `SCHEDULE_SERVICE_SPECIALS` |
-| `schedule_service` | `0 3 5 * *` | 5th @ 03:00 | `SCHEDULE_SCHEDULE_SERVICE` |
-| `new_inventory` | `0 4 5 * *` | 5th @ 04:00 | `SCHEDULE_NEW_INVENTORY` |
-| `certified_inventory` | `0 5 5 * *` | 5th @ 05:00 | `SCHEDULE_CERTIFIED_INVENTORY` |
-| `used_inventory` | `0 6 5 * *` | 5th @ 06:00 | `SCHEDULE_USED_INVENTORY` |
-| `offer_to_purchase` | `0 7 5 * *` | 5th @ 07:00 | `SCHEDULE_OFFER_TO_PURCHASE` |
-
-Cron format is standard 5-field (`minute hour day month day_of_week`) in the
-`APP_TIMEZONE` timezone (default `Asia/Kolkata`). Example override:
-
-```bash
-SCHEDULER_ENABLED=true
-SCHEDULE_SALES_SPECIALS="30 1 5 * *"     # 5th of month @ 01:30
-SCHEDULE_USED_INVENTORY="0 6 5 * *"      # 5th of month @ 06:00
-```
-
-Config lives in `app/config/scheduler_config.py`; the runner in
-`app/scheduler/runner.py`.
+Type wiring lives in `app/config/type_registry.py`, which maps each
+`OfferType` to its prompt, response schema, processor, and output subfolder — the
+single place a type is defined end to end. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the stage-by-stage internals.
 
 ---
 
-## Single-run lock (one run at a time)
+## Single-run lock
 
-Only **one** offer-generation run may be in flight at any moment. This prevents a
-new request from interrupting or piling up behind work already in progress.
+Only **one** offer-generation run may be in flight at any moment, preventing a new
+request from interrupting or piling up behind work already in progress
+(`app/events/run_lock.py`).
 
-- When you `POST /process` (or `GET /generate`) and **no** run is active, the run
-  starts and you get the normal `processing` response.
-- When a run **is** active, the request is rejected immediately with **HTTP 409**
-  and a message naming the offer type that is currently running — so you know to
-  wait and retry once it finishes:
-
-```json
-{
-  "error": {
-    "code": "offer_run_in_progress",
-    "message": "An offer-generation run for 'sales_specials' is currently running. Please wait until it completes before starting another."
-  }
-}
-```
+- No run active → the run starts and returns the normal `processing` response.
+- A run active → the request is rejected immediately with **HTTP 409**, naming the
+  offer type currently running.
 
 The lock is released automatically when the run finishes (all dealers extracted)
-or if scraping fails before any dealer is dispatched. The **scheduler** respects
-the same lock: a scheduled job is skipped (logged) if a run is already active.
-
-Implementation: `app/events/run_lock.py`.
+or if scraping fails before any dealer is dispatched.
 
 ---
 
@@ -242,8 +238,8 @@ Two independent worker pools, **both default to 5**:
 | `DEALER_EXTRACT_WORKERS` | **5** | Dealers whose offers are extracted in parallel (stage C). Keep near the number of LLM keys. |
 
 LLM concurrency is naturally capped by the API-key pool: at most `len(keys)`
-extractions run at once, each on a distinct key (backpressure, no 429s). Scraper
-and LLM concurrency are decoupled.
+extractions run at once, each on a distinct key. Scraper and LLM concurrency are
+decoupled.
 
 ---
 
@@ -256,74 +252,11 @@ storage/offers/
 ├── sales_specials/
 │   ├── zip/      <dealer>_<date>.zip     # one .xlsx per OEM with offers
 │   └── errors/   error_<dealer>_<date>.txt
-├── service_specials/
-│   ├── zip/
-│   └── errors/
-├── used_inventory/
-│   ├── zip/
-│   └── errors/
 └── ... (one folder per type)
 ```
 
 Path helpers: `app/utils/output_paths.py` —
 `get_output_directory(type)`, `get_zip_directory(type)`, `get_error_directory(type)`.
-
----
-
-## Diagrammatic flow
-
-### Multi-type routing
-
-```mermaid
-flowchart LR
-    subgraph Entrypoints
-        API["POST /api/v1/offers/process<br/>{type?, path}"]
-        CLI["python main.py --type --path"]
-        SCH["APScheduler<br/>per-type cron"]
-    end
-    REG["type_registry.get_processor(offer_type)<br/>(default: sales_specials)"]
-    P1["SalesSpecialsProcessor<br/>(real logic)"]
-    P2["6× placeholder processors<br/>(shared base)"]
-    OUT["storage/offers/&lt;type&gt;/{zip,errors}"]
-
-    API -->|publish {offer_type, excel_path}| REG
-    CLI --> REG
-    SCH -->|publish {offer_type, excel_path}| REG
-    REG --> P1
-    REG --> P2
-    P1 --> OUT
-    P2 --> OUT
-```
-
-### Broker pipeline (per event)
-
-```mermaid
-flowchart LR
-    A["scrape_broker<br/>1 worker"]
-    B["extract_broker<br/>5 workers"]
-    Z["storage/offers/&lt;type&gt;/"]
-
-    A -->|read Excel, filter by type label,<br/>skip Homepage/Contact Us/Map| A
-    A -->|scrape URLs in parallel ×5| A
-    A -->|publish 1 msg/dealer<br/>{offer_type, urls...}| B
-    B -->|processor.build_dealer<br/>dealers parallel ×5| B
-    B --> Z
-```
-
-### How the type is resolved everywhere
-
-```mermaid
-flowchart TD
-    IN["incoming type<br/>(string | None)"] --> N{"normalize_offer_type()"}
-    N -->|None/empty| D["sales_specials (default)"]
-    N -->|"'Sales Specials' / 'used_inventory' / ..."| OK["OfferType enum"]
-    N -->|unknown| ERR["UnsupportedOfferTypeError<br/>(400, lists allowed values)"]
-    OK --> CFG["type_registry.get_type_config()<br/>→ prompt + response_schema + processor + output dir"]
-    D --> CFG
-```
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the original stage-by-stage
-pipeline internals (scraping, LLM key pool, dedupe).
 
 ---
 
@@ -334,12 +267,62 @@ Adding a type touches only config + three small files:
 1. Add a value to `OfferType` and its Excel label in `app/config/offer_types.py`.
 2. Create `app/prompts/<type>.py` (a `SYSTEM_PROMPT`).
 3. Create `app/response_templates/<type>.py` (a `RESPONSE_SCHEMA`).
-4. Create `app/processors/<type>_processor.py` (subclass `BaseProcessor`, or reuse it).
-5. Register the processor in `app/config/type_registry.py` and add a cron entry in
-   `app/config/scheduler_config.py` + `app/core/config.py`.
+4. Create `app/processors/<type>_processor.py` (subclass `BaseProcessor`).
+5. Register the processor in `app/config/type_registry.py` and add an activation
+   flag in `app/core/config.py` (set it `true` to enable requests).
 
-No other files need changes — the API, CLI, scheduler, and broker all route
-through the registry.
+The API and broker all route through the registry — no other files change.
+
+---
+
+## Diagrammatic flow
+
+### Type routing
+
+```mermaid
+flowchart LR
+    API["POST /api/v1/offers/process<br/>{type?, path?}"]
+    REG["type_registry.get_processor(offer_type)<br/>(default: sales_specials)"]
+    P1["SalesSpecialsProcessor<br/>(active)"]
+    P2["6× inactive processors<br/>(shared base)"]
+    OUT["storage/offers/&lt;type&gt;/{zip,errors}"]
+
+    API -->|publish {offer_type, excel_path}| REG
+    REG --> P1
+    REG -.-> P2
+    P1 --> OUT
+```
+
+### Request lifecycle (A → B → C)
+
+```mermaid
+flowchart LR
+    A["A — API request<br/>normalize + active check + lock"]
+    B["B — scrape_broker<br/>1 worker"]
+    C["C — extract_broker<br/>5 workers"]
+    Z["storage/offers/&lt;type&gt;/"]
+
+    A -->|publish {offer_type, excel_path}| B
+    B -->|read Excel, filter by type label,<br/>skip Homepage/Contact Us/Map| B
+    B -->|scrape URLs in parallel ×5| B
+    B -->|publish 1 msg/dealer| C
+    C -->|processor.build_dealer<br/>dealers parallel ×5| C
+    C --> Z
+```
+
+### How the type is resolved
+
+```mermaid
+flowchart TD
+    IN["incoming type<br/>(string | None)"] --> N{"normalize_offer_type()"}
+    N -->|None/empty| D["sales_specials (default)"]
+    N -->|"'Sales Specials' / 'sales_specials'"| OK["OfferType enum"]
+    N -->|unknown| ERR["UnsupportedOfferTypeError<br/>(400)"]
+    OK --> ACT{"is_service_active()?"}
+    D --> ACT
+    ACT -->|no| F403["ServiceNotActiveError (403)"]
+    ACT -->|yes| CFG["type_registry.get_type_config()<br/>→ prompt + schema + processor + output dir"]
+```
 
 ---
 
@@ -349,17 +332,19 @@ through the registry.
 pytest -q
 ```
 
-Covers: default → `sales_specials`, explicit-type filtering, unsupported rows
-skipped, invalid API type validation, output isolation per type, and Sales
-Specials delegation to the original logic.
+**22 tests** cover the full API surface and type routing:
 
----
+| Test file | What it verifies |
+|-----------|------------------|
+| `tests/test_offer_types.py` | Default resolves to `sales_specials`; label/alias normalization; unsupported type raises with the allowed list. |
+| `tests/test_api.py` | `/types` listing; default → `sales_specials`; explicit active type; **inactive type → 403**; invalid type → 400; single-run lock → 409; lock release after a run completes. |
+| `tests/test_filtering.py` | Excel rows filtered by type label; `Homepage`/`Contact Us`/`Map` skipped. |
+| `tests/test_processors.py` | Sales Specials delegates to the original extraction logic; per-type processor wiring. |
+| `tests/test_output_paths.py` | Output isolation — each type writes only under its own `zip/` and `errors/` folder. |
 
-## Known TODOs
+Run a single file or test:
 
-- Prompts in `app/prompts/*` for the 6 non–sales types are **placeholders**
-  (marked `# TODO`) and need production content.
-- Response schemas in `app/response_templates/*` for those types are minimal
-  placeholders (3-4 fields).
-- Placeholder processors emit simple JSON output; real per-type extraction /
-  Excel formatting is future work.
+```bash
+pytest tests/test_api.py -q
+pytest tests/test_api.py::test_inactive_service_returns_403 -q
+```

@@ -8,10 +8,7 @@ from app.main import app
 
 @pytest.fixture
 def client(monkeypatch):
-    # Don't trigger real scraping when an event is published.
     monkeypatch.setattr(offers_module.scrape_broker, "publish", lambda event: None)
-    # Each test starts with an idle lock (publish is mocked so a run never
-    # completes to release it on its own).
     run_lock.release()
     with TestClient(app) as test_client:
         yield test_client
@@ -35,10 +32,21 @@ def test_process_defaults_to_sales_specials(client):
 def test_process_explicit_type(client):
     resp = client.post(
         "/api/v1/offers/process",
-        json={"type": "service_specials", "path": "x.xlsx"},
+        json={"type": "sales_specials", "path": "x.xlsx"},
     )
     assert resp.status_code == 200
-    assert resp.json()["offer_type"] == "service_specials"
+    assert resp.json()["offer_type"] == "sales_specials"
+
+
+def test_inactive_service_returns_403(client):
+    resp = client.post(
+        "/api/v1/offers/process",
+        json={"type": "service_specials", "path": "x.xlsx"},
+    )
+    assert resp.status_code == 403
+    body = resp.json()["error"]
+    assert body["code"] == "service_not_active"
+    assert "service_specials" in body["message"]
 
 
 def test_process_invalid_type_returns_error(client):
@@ -58,21 +66,19 @@ def test_second_request_while_running_is_rejected(client):
     assert first.status_code == 200
 
     second = client.post(
-        "/api/v1/offers/process", json={"type": "service_specials", "path": "y.xlsx"}
+        "/api/v1/offers/process", json={"type": "sales_specials", "path": "y.xlsx"}
     )
     assert second.status_code == 409
     body = second.json()["error"]
     assert body["code"] == "offer_run_in_progress"
-    # The response names the offer type that is currently running.
     assert "sales_specials" in body["message"]
 
 
 def test_lock_releases_after_run_completes(client, monkeypatch):
-    # Simulate a run that completes (release the lock) between requests.
     first = client.post("/api/v1/offers/process", json={"type": "sales_specials"})
     assert first.status_code == 200
-    run_lock.release()  # run finished
+    run_lock.release()
 
-    second = client.post("/api/v1/offers/process", json={"type": "service_specials"})
+    second = client.post("/api/v1/offers/process", json={"type": "sales_specials"})
     assert second.status_code == 200
-    assert second.json()["offer_type"] == "service_specials"
+    assert second.json()["offer_type"] == "sales_specials"

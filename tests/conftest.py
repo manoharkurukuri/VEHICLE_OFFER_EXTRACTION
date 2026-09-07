@@ -12,7 +12,6 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 
-# Ensure a non-empty key exists before any processor/service is constructed.
 settings.gemini_api_key = SecretStr("test-key")
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 

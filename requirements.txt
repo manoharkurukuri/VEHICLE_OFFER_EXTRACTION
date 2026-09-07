@@ -14,5 +14,4 @@ langchain-openai>=0.2
 python-dotenv>=1.0
 requests>=2.32
 playwright>=1.50
-apscheduler>=3.10
 pytest>=8.0

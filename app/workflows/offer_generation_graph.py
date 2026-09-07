@@ -100,7 +100,6 @@ class OfferGenerationWorkflow:
         keys: list[tuple] = []
         vin = norm(incentive.vin_number)
         if vin:
-            # One offer may list several comma-separated VINs.
             keys.extend(("vin", part.strip()) for part in vin.split(",") if part.strip())
         stock = norm(incentive.stock_number)
         if stock:

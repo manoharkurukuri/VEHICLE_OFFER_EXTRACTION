@@ -25,13 +25,10 @@ class OfferType(str, Enum):
     OFFER_TO_PURCHASE = "offer_to_purchase"
 
 
-#: The default type used everywhere a type is omitted (API, CLI, scheduler, internal).
 DEFAULT_OFFER_TYPE = OfferType.SALES_SPECIALS
 
-#: All supported types, in a stable order.
 SUPPORTED_OFFER_TYPES: tuple[OfferType, ...] = tuple(OfferType)
 
-#: Internal type -> the exact label used in the input Excel's ``type`` column.
 EXCEL_TYPE_LABELS: dict[OfferType, str] = {
     OfferType.SALES_SPECIALS: "Sales Specials",
     OfferType.SERVICE_SPECIALS: "Service Specials",
@@ -42,18 +39,16 @@ EXCEL_TYPE_LABELS: dict[OfferType, str] = {
     OfferType.OFFER_TO_PURCHASE: "Offer To Purchase",
 }
 
-#: Excel ``type`` values that must never be processed (skipped, not an error).
 IGNORED_EXCEL_TYPES: frozenset[str] = frozenset(
     {"homepage", "contact us", "map"}
 )
 
-# Accept common spellings/aliases of the Excel labels and internal values.
 _ALIASES: dict[str, OfferType] = {}
 for _offer_type in OfferType:
-    _ALIASES[_offer_type.value] = _offer_type  # snake_case internal value
-    _ALIASES[_offer_type.value.replace("_", " ")] = _offer_type  # "sales specials"
+    _ALIASES[_offer_type.value] = _offer_type
+    _ALIASES[_offer_type.value.replace("_", " ")] = _offer_type
 for _offer_type, _label in EXCEL_TYPE_LABELS.items():
-    _ALIASES[_label.casefold()] = _offer_type  # "sales specials"
+    _ALIASES[_label.casefold()] = _offer_type
 
 
 def supported_values() -> list[str]:

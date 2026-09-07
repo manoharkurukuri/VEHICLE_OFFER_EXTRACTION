@@ -23,6 +23,5 @@ class SalesSpecialsProcessor(BaseProcessor):
     response_schema = RESPONSE_SCHEMA
 
     def build_dealer(self, payload: dict[str, Any]) -> DealerZipResult:
-        # Real logic: the existing service builds the rich 27-column Excel zip.
         payload.setdefault("offer_type", self.offer_type.value)
         return self.service.build_dealer(payload)

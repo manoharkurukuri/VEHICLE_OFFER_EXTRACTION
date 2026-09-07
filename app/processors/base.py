@@ -1,13 +1,12 @@
 """Processor abstraction: one processor per offer type.
 
-Every processor exposes the same interface so the API, CLI, scheduler, and broker
-can drive any offer type uniformly:
+Every processor exposes the same interface so the API and broker can drive any
+offer type uniformly:
 
     processor = get_processor(offer_type)
-    processor.process(excel_path)                 # sync end-to-end
-    # or, for the broker pipeline:
-    processor.scrape(excel_path, on_dealer_ready) # stage B (fan-out)
-    processor.build_dealer(payload)               # stage C (per dealer)
+    processor.process(excel_path)
+    processor.scrape(excel_path, on_dealer_ready)
+    processor.build_dealer(payload)
 
 Shared scraping + parallelism live here (and in :class:`OfferGenerationService`),
 so type-specific behavior is isolated to ``build_dealer``. The Sales Specials
@@ -54,10 +53,8 @@ class BaseProcessor:
     response_schema: type[BaseModel] | None = None
 
     def __init__(self, service: OfferGenerationService | None = None) -> None:
-        # One shared service (scraping is fully generic and type-aware).
         self.service = service or OfferGenerationService()
 
-    # --- Stage B (scrape fan-out) -----------------------------------------
     def scrape(
         self,
         excel_path: str | Path,
@@ -71,7 +68,6 @@ class BaseProcessor:
             on_dealers_enumerated=on_dealers_enumerated,
         )
 
-    # --- Stage C (per dealer) ---------------------------------------------
     def build_dealer(self, payload: dict[str, Any]) -> DealerZipResult:
         """Default (placeholder) extraction: run the type's prompt + schema over
         each already-scraped URL and write one JSON per dealer, zipped, plus a
@@ -118,7 +114,7 @@ class BaseProcessor:
                     cached = [
                         rec.model_dump() for rec in getattr(result, "records", [])
                     ]
-                except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
+                except Exception as exc:
                     logger.error(
                         "%s Extraction failed | dealer_id=%s | oem=%s | url=%s | error=%s",
                         prefix,
@@ -199,7 +195,6 @@ class BaseProcessor:
 
         return result
 
-    # --- Sync end-to-end (CLI) --------------------------------------------
     def process(self, excel_path: str | Path) -> GenerateOffersResult:
         prefix = f"[{self.offer_type.value}]"
         logger.info("%s Starting extraction | excel_path=%s", prefix, str(excel_path))

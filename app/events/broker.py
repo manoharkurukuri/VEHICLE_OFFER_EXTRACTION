@@ -11,7 +11,6 @@ Handler = Callable[[Event], None]
 
 logger = get_logger(__name__)
 
-# Sentinel pushed onto the queue to unblock the worker(s) during shutdown.
 _STOP = object()
 
 
@@ -78,13 +77,8 @@ class InMemoryBroker:
                 self._queue.task_done()
 
 
-# Stage B: receives an excel path, scrapes every Sales Specials URL, and fans out
-# one scraped-data message per dealer to the extract broker. A single worker is
-# enough because the scraping itself is parallelised inside the handler.
 scrape_broker = InMemoryBroker(name="scrape", workers=1)
 
-# Stage C: receives one dealer's scraped data, runs the LLM sequentially over that
-# dealer's URLs. Multiple workers let different dealers run in parallel.
 extract_broker = InMemoryBroker(
     name="extract", workers=settings.dealer_extract_workers
 )

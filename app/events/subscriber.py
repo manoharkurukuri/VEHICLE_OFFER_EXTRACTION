@@ -66,8 +66,6 @@ class _RunTracker:
             duration,
             self._completed,
         )
-        # Run is fully complete: free the global lock so the next request/run
-        # can start.
         run_lock.release()
 
 
@@ -96,9 +94,6 @@ def handle_scrape_event(event: dict[str, Any]) -> None:
             on_dealers_enumerated=_run_tracker.set_expected,
         )
     except Exception:
-        # Scraping failed before any dealer was dispatched to extract, so the
-        # run tracker will never finalize; release the lock here so the API
-        # isn't stuck reporting a run in progress.
         logger.exception(
             "[%s] Scraping stage failed | excel_path=%s",
             processor.offer_type.value,
@@ -137,7 +132,5 @@ def handle_extract_event(event: dict[str, Any]) -> None:
             result.error_file_name,
         )
     finally:
-        # Finalize (and log total duration) only after this dealer's completion
-        # log above, so the summary line is the last line of the run.
         _run_tracker.dealer_done()
 
