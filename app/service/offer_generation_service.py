@@ -30,6 +30,20 @@ REQUIRED_COLUMNS = {"id", "DealerName", "oem", "type", "url"}
 logger = get_logger(__name__)
 
 
+def _is_active_status(value: Any) -> bool:
+    """Interpret an Excel ``status`` cell as active/inactive.
+
+    Truthy: True, 1, "true", "yes", "y", "1". Falsy: False, 0, "0", blank/NaN, anything else.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().casefold() in {"true", "yes", "y", "1"}
+
+
 @dataclass
 class _UrlResult:
     """Outcome of scraping + extracting a single dealer/OEM URL."""
@@ -120,6 +134,18 @@ class OfferGenerationService:
             raise FileStorageError(
                 f"Input workbook is missing required columns: {sorted(missing)}"
             )
+
+        # Keep only active dealers (status == True). Absent column => keep all rows.
+        if "status" in df.columns:
+            active_mask = df["status"].map(_is_active_status)
+            disabled_count = int((~active_mask).sum())
+            if disabled_count:
+                logger.info(
+                    "%s Skipping disabled dealers (status != True) | skipped_rows=%d",
+                    log_prefix,
+                    disabled_count,
+                )
+            df = df[active_mask]
 
         type_series = df["type"].astype(str)
         matching = df[type_series.str.strip().str.casefold() == target_label.casefold()]

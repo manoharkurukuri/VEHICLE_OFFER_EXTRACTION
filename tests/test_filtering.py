@@ -57,3 +57,44 @@ def test_unsupported_rows_are_skipped_not_failed(tmp_path, service):
     # Homepage/Contact Us/Map must never produce dealers and must not raise.
     _, payloads = service.scrape_dealers(wb, offer_type=OfferType.SERVICE_SPECIALS)
     assert _dealer_ids(payloads) == {"D1"}
+
+
+def test_status_false_dealers_are_excluded(tmp_path, service):
+    wb = tmp_path / "in.xlsx"
+    df = pd.DataFrame(
+        [
+            {"id": "D1", "DealerName": "Dealer One", "oem": "GMC", "type": "Sales Specials", "url": "https://a", "status": True},
+            {"id": "D2", "DealerName": "Dealer Two", "oem": "Ford", "type": "Sales Specials", "url": "https://b", "status": False},
+        ]
+    )
+    df.to_excel(wb, index=False)
+    _, payloads = service.scrape_dealers(wb)  # default = sales_specials
+    assert _dealer_ids(payloads) == {"D1"}
+
+
+def test_status_accepts_string_true(tmp_path, service):
+    wb = tmp_path / "in.xlsx"
+    df = pd.DataFrame(
+        [
+            {"id": "D1", "DealerName": "Dealer One", "oem": "GMC", "type": "Sales Specials", "url": "https://a", "status": "TRUE"},
+            {"id": "D2", "DealerName": "Dealer Two", "oem": "Ford", "type": "Sales Specials", "url": "https://b", "status": "false"},
+        ]
+    )
+    df.to_excel(wb, index=False)
+    _, payloads = service.scrape_dealers(wb)
+    assert _dealer_ids(payloads) == {"D1"}
+
+
+def test_status_accepts_numeric_0_and_1(tmp_path, service):
+    wb = tmp_path / "in.xlsx"
+    df = pd.DataFrame(
+        [
+            {"id": "D1", "DealerName": "Dealer One", "oem": "GMC", "type": "Sales Specials", "url": "https://a", "status": 1},
+            {"id": "D2", "DealerName": "Dealer Two", "oem": "Ford", "type": "Sales Specials", "url": "https://b", "status": 0},
+        ]
+    )
+    df.to_excel(wb, index=False)
+    _, payloads = service.scrape_dealers(wb)
+    assert _dealer_ids(payloads) == {"D1"}
+
+

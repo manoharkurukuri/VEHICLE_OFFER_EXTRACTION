@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     dealer_extract_workers: int = 5
 
     # Default input workbook used when a caller omits the path (CLI/scheduler).
-    default_excel_path: str = "offers/MWK00012GMC_Dealership_URLs.xlsx"
+    default_excel_path: str = "offers/status_ex.xlxs"
 
     # --- Scheduler (APScheduler, in-process) -------------------------------
     # Off by default; enable to run per-type cron jobs inside the API process.
@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     schedule_certified_inventory: str = "0 5 5 * *"
     schedule_used_inventory: str = "0 6 5 * *"
     schedule_offer_to_purchase: str = "0 7 5 * *"
+
+    # --- Service activation ------------------------------------------------
+    # Per-type on/off switches. A request for an inactive service is rejected.
+    sales_specials: bool = True
+    service_specials: bool = False
+    new_inventory: bool = False
+    certified_inventory: bool = False
+    used_inventory: bool = False
+    offer_to_purchase: bool = False
+    schedule_service: bool = False
 
 
     model_config = SettingsConfigDict(
@@ -71,6 +81,10 @@ class Settings(BaseSettings):
                 return keys
         single = self.gemini_api_key.get_secret_value().strip()
         return [single] if single else []
+
+    def is_service_active(self, offer_type_value: str) -> bool:
+        """Whether a given offer type's service is enabled via env flags."""
+        return bool(getattr(self, offer_type_value, False))
 
 @lru_cache
 def get_settings() -> Settings:

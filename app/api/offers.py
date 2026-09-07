@@ -7,7 +7,7 @@ from app.config.offer_types import (
     supported_values,
 )
 from app.core.config import settings
-from app.core.exceptions import OfferRunInProgressError
+from app.core.exceptions import OfferRunInProgressError, ServiceNotActiveError
 from app.events.broker import scrape_broker
 from app.events.run_lock import run_lock
 
@@ -33,6 +33,8 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
     writes each dealer's output under ``storage/offers/<type>/``.
     """
     offer_type = normalize_offer_type(request.type)
+    if not settings.is_service_active(offer_type.value):
+        raise ServiceNotActiveError(offer_type.value)
     excel_path = request.path or settings.default_excel_path
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
@@ -67,6 +69,8 @@ def generate_offers(
     """Backwards-compatible endpoint. Defaults to ``sales_specials`` and the
     configured default workbook path."""
     offer_type = normalize_offer_type(type)
+    if not settings.is_service_active(offer_type.value):
+        raise ServiceNotActiveError(offer_type.value)
     path = excel_path or settings.default_excel_path
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:

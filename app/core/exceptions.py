@@ -42,6 +42,15 @@ class UnsupportedOfferTypeError(AppException):
     code = "unsupported_offer_type"
 
 
+class ServiceNotActiveError(AppException):
+    status_code = 403
+    code = "service_not_active"
+
+    def __init__(self, offer_type: str) -> None:
+        self.offer_type = offer_type
+        super().__init__(f"The '{offer_type}' service is not active.")
+
+
 class OfferRunInProgressError(AppException):
     status_code = 409
     code = "offer_run_in_progress"
