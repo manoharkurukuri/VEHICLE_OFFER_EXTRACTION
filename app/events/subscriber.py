@@ -26,6 +26,7 @@ class _RunTracker:
         self._start_dt: datetime | None = None
         self._expected: int | None = None
         self._completed = 0
+        self._total_urls = 0
         self._finalized = False
 
     def start(self) -> None:
@@ -34,6 +35,7 @@ class _RunTracker:
             self._start_dt = datetime.now()
             self._expected = None
             self._completed = 0
+            self._total_urls = 0
             self._finalized = False
 
     def set_expected(self, expected: int) -> None:
@@ -41,9 +43,10 @@ class _RunTracker:
             self._expected = expected
             self._maybe_finalize()
 
-    def dealer_done(self) -> None:
+    def dealer_done(self, url_count: int = 0) -> None:
         with self._lock:
             self._completed += 1
+            self._total_urls += url_count
             self._maybe_finalize()
 
     def _maybe_finalize(self) -> None:
@@ -60,11 +63,12 @@ class _RunTracker:
         )
         logger.info(
             "All dealers extraction completed | start=%s | end=%s | "
-            "duration_seconds=%.2f | dealer_count=%d",
+            "duration_seconds=%.2f | dealer_count=%d | total_urls_processed=%d",
             self._start_dt.strftime("%Y-%m-%d %H:%M:%S") if self._start_dt else "-",
             end_dt.strftime("%Y-%m-%d %H:%M:%S"),
             duration,
             self._completed,
+            self._total_urls,
         )
         run_lock.release()
 
@@ -132,5 +136,5 @@ def handle_extract_event(event: dict[str, Any]) -> None:
             result.error_file_name,
         )
     finally:
-        _run_tracker.dealer_done()
+        _run_tracker.dealer_done(len(event.get("urls", [])))
 
