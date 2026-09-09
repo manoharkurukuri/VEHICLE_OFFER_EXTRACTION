@@ -1,7 +1,7 @@
 import re
 import zipfile
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +17,7 @@ from app.config.offer_types import (
     excel_label,
     normalize_offer_type,
 )
+from app.core.concurrency import ContextThreadPoolExecutor
 from app.core.config import settings
 from app.core.exceptions import FileStorageError
 from app.core.logger import get_logger
@@ -91,7 +92,7 @@ class OfferGenerationService:
         dealers: list[DealerZipResult | None] = [None] * len(payloads)
         if payloads:
             workers = max(1, min(settings.dealer_extract_workers, len(payloads)))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ContextThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
                     pool.submit(self.build_dealer, payload): index
                     for index, payload in enumerate(payloads)
@@ -245,7 +246,7 @@ class OfferGenerationService:
                             )
                             on_dealer_ready(payload)
 
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ContextThreadPoolExecutor(max_workers=workers) as pool:
                 futures = [
                     pool.submit(self._scrape_url, url) for url in url_to_rows
                 ]

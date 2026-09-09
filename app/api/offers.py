@@ -7,6 +7,7 @@ from app.config.offer_types import (
     supported_values,
 )
 from app.core.config import settings
+from app.core.correlation import get_correlation_id
 from app.core.exceptions import OfferRunInProgressError, ServiceNotActiveError
 from app.events.broker import scrape_broker
 from app.events.run_lock import run_lock
@@ -45,13 +46,18 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
         "Offers will be generated in a few minutes.",
         "offer_type": offer_type.value,
         "excel_path": excel_path,
+        "correlation_id": get_correlation_id(),
     }
 
 
 @router.get("/types")
 def list_types() -> dict[str, object]:
     """List every supported offer type and the default."""
-    return {"supported": supported_values(), "default": DEFAULT_OFFER_TYPE.value}
+    return {
+        "supported": supported_values(),
+        "default": DEFAULT_OFFER_TYPE.value,
+        "correlation_id": get_correlation_id(),
+    }
 
 
 @router.get("/generate")
@@ -81,4 +87,5 @@ def generate_offers(
         "Offers will be generated in a few minutes.",
         "offer_type": offer_type.value,
         "excel_path": path,
+        "correlation_id": get_correlation_id(),
     }

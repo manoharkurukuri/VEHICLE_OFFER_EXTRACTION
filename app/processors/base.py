@@ -19,13 +19,14 @@ from __future__ import annotations
 import json
 import re
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from app.config.offer_types import DEFAULT_OFFER_TYPE, OfferType
+from app.core.concurrency import ContextThreadPoolExecutor
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.schemas.offer import DealerZipResult, GenerateOffersResult
@@ -203,7 +204,7 @@ class BaseProcessor:
         dealers: list[DealerZipResult | None] = [None] * len(payloads)
         if payloads:
             workers = max(1, min(settings.dealer_extract_workers, len(payloads)))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ContextThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
                     pool.submit(self.build_dealer, payload): index
                     for index, payload in enumerate(payloads)

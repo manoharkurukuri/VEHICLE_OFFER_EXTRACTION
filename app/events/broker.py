@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.core.config import settings
+from app.core.correlation import get_correlation_id, set_correlation_id
 from app.core.logger import get_logger
 
 Event = dict[str, Any]
@@ -12,6 +13,7 @@ Handler = Callable[[Event], None]
 logger = get_logger(__name__)
 
 _STOP = object()
+_CORRELATION_KEY = "__correlation_id__"
 
 
 class InMemoryBroker:
@@ -35,6 +37,7 @@ class InMemoryBroker:
         self._handler = handler
 
     def publish(self, event: Event) -> None:
+        event.setdefault(_CORRELATION_KEY, get_correlation_id())
         self._queue.put(event)
         logger.info("Event published | broker=%s", self.name)
 
@@ -66,6 +69,7 @@ class InMemoryBroker:
                         "No subscriber registered; event dropped | broker=%s", self.name
                     )
                     continue
+                set_correlation_id(event.get(_CORRELATION_KEY, "-"))
                 self._handler(event)
             except Exception as exc:
                 logger.error(
