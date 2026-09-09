@@ -93,6 +93,8 @@ class BaseProcessor:
         error_sections: list[str] = []
         errors: dict[str, str] = {}
         cache: dict[str, list[dict[str, Any]] | Exception] = {}
+        no_offer_count = 0
+        scrape_error_count = 0
 
         for entry in payload["urls"]:
             oem = entry.get("oem", "")
@@ -102,6 +104,7 @@ class BaseProcessor:
                 msg = f"URL: {url}\nOEM: {oem}\nError: {scrape_error}"
                 error_sections.append(msg)
                 errors[oem] = str(scrape_error)
+                scrape_error_count += 1
                 continue
 
             cached = cache.get(url)
@@ -133,11 +136,21 @@ class BaseProcessor:
                 errors[oem] = str(cached)
                 continue
 
+            if not cached:
+                no_offer_count += 1
+
             for rec in cached:
                 records.append({"oem": oem, "url": url, **rec})
 
         return self._assemble(
-            dealer_id, dealer_name, date_token, records, error_sections, errors
+            dealer_id,
+            dealer_name,
+            date_token,
+            records,
+            error_sections,
+            errors,
+            no_offer_count,
+            scrape_error_count,
         )
 
     def _assemble(
@@ -148,12 +161,16 @@ class BaseProcessor:
         records: list[dict[str, Any]],
         error_sections: list[str],
         errors: dict[str, str],
+        no_offer_count: int = 0,
+        scrape_error_count: int = 0,
     ) -> DealerZipResult:
         result = DealerZipResult(
             dealer_id=dealer_id,
             dealer_name=dealer_name,
             offer_counts={"records": len(records)},
             errors=errors,
+            no_offer_count=no_offer_count,
+            scrape_error_count=scrape_error_count,
         )
         prefix = f"[{self.offer_type.value}]"
 

@@ -29,6 +29,8 @@ class _RunTracker:
         self._total_urls = 0
         self._total_urls_succeeded = 0
         self._total_urls_error = 0
+        self._total_no_offers = 0
+        self._total_scrape_errors = 0
         self._finalized = False
 
     def start(self) -> None:
@@ -40,6 +42,8 @@ class _RunTracker:
             self._total_urls = 0
             self._total_urls_succeeded = 0
             self._total_urls_error = 0
+            self._total_no_offers = 0
+            self._total_scrape_errors = 0
             self._finalized = False
 
     def set_expected(self, expected: int) -> None:
@@ -47,12 +51,20 @@ class _RunTracker:
             self._expected = expected
             self._maybe_finalize()
 
-    def dealer_done(self, url_count: int = 0, error_count: int = 0) -> None:
+    def dealer_done(
+        self,
+        url_count: int = 0,
+        error_count: int = 0,
+        no_offer_count: int = 0,
+        scrape_error_count: int = 0,
+    ) -> None:
         with self._lock:
             self._completed += 1
             self._total_urls += url_count
             self._total_urls_error += error_count
             self._total_urls_succeeded += max(url_count - error_count, 0)
+            self._total_no_offers += no_offer_count
+            self._total_scrape_errors += scrape_error_count
             self._maybe_finalize()
 
     def _maybe_finalize(self) -> None:
@@ -70,7 +82,8 @@ class _RunTracker:
         logger.info(
             "All dealers extraction completed | start=%s | end=%s | "
             "duration_seconds=%.2f | dealer_count=%d | total_urls_processed=%d | "
-            "total_urls_succeeded=%d | total_urls_error=%d",
+            "total_urls_succeeded=%d | total_urls_error=%d | "
+            "no_offers_extracted=%d | scraping_error_count=%d",
             self._start_dt.strftime("%Y-%m-%d %H:%M:%S") if self._start_dt else "-",
             end_dt.strftime("%Y-%m-%d %H:%M:%S"),
             duration,
@@ -78,6 +91,8 @@ class _RunTracker:
             self._total_urls,
             self._total_urls_succeeded,
             self._total_urls_error,
+            self._total_no_offers,
+            self._total_scrape_errors,
         )
         run_lock.release()
 
@@ -145,7 +160,12 @@ def handle_extract_event(event: dict[str, Any]) -> None:
             result.zip_name,
             result.error_file_name,
         )
-        _run_tracker.dealer_done(url_count, len(result.errors))
+        _run_tracker.dealer_done(
+            url_count,
+            len(result.errors),
+            result.no_offer_count,
+            result.scrape_error_count,
+        )
     except Exception:
         _run_tracker.dealer_done(url_count, url_count)
         raise

@@ -58,6 +58,7 @@ class _UrlResult:
     file_name: str | None = None
     file_bytes: bytes | None = None
     error_message: str | None = None
+    error_kind: str | None = None
 
 
 class OfferGenerationService:
@@ -315,6 +316,7 @@ class OfferGenerationService:
                 url=url,
                 count=0,
                 error_message=f"URL: {url}\nOEM: {oem}\nError: {scrape_error}",
+                error_kind="scrape",
             )
 
         cached = cache.get(url)
@@ -341,6 +343,7 @@ class OfferGenerationService:
                 url=url,
                 count=0,
                 error_message=f"URL: {url}\nOEM: {oem}\nError: {cached}",
+                error_kind="extract",
             )
 
         incentives, count = cached
@@ -379,6 +382,7 @@ class OfferGenerationService:
                 f"URL: {url}\nOEM: {oem}\n"
                 "Error: No offers were extracted from this page."
             ),
+            error_kind="no_offer",
         )
 
     def _assemble_dealer(
@@ -393,6 +397,8 @@ class OfferGenerationService:
         offer_counts: dict[str, int] = {}
         error_sections: list[str] = []
         errors: dict[str, str] = {}
+        no_offer_count = 0
+        scrape_error_count = 0
 
         for res in results:
             offer_counts[res.oem] = res.count
@@ -403,6 +409,10 @@ class OfferGenerationService:
                 errors[res.oem] = res.error_message.splitlines()[-1].removeprefix(
                     "Error: "
                 )
+            if res.error_kind == "no_offer":
+                no_offer_count += 1
+            elif res.error_kind == "scrape":
+                scrape_error_count += 1
 
         result = DealerZipResult(
             dealer_id=dealer_id,
@@ -410,6 +420,8 @@ class OfferGenerationService:
             excel_files=[name for name, _ in workbooks],
             offer_counts=offer_counts,
             errors=errors,
+            no_offer_count=no_offer_count,
+            scrape_error_count=scrape_error_count,
         )
 
         zip_dir = get_zip_directory(offer_type)

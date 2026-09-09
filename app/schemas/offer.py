@@ -11,6 +11,8 @@ class DealerZipResult(BaseModel):
     error_file_name: str | None = None
     error_file_path: str | None = None
     errors: dict[str, str] = {}
+    no_offer_count: int = 0
+    scrape_error_count: int = 0
 
 
 class GenerateOffersResult(BaseModel):
