@@ -4,6 +4,11 @@ from fastapi.responses import JSONResponse
 from app.core.exceptions import AppException
 from app.core.config import settings  
 from app.core.logger import get_logger
+from app.core.correlation import (
+    CORRELATION_ID_HEADER,
+    generate_correlation_id,
+    set_correlation_id,
+)
 from app.core.exception_handlers import register_exception_handlers
 from app.api.offers import router as offers_router
 from app.events.broker import extract_broker, scrape_broker
@@ -37,8 +42,12 @@ app.include_router(offers_router)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    correlation_id = request.headers.get(CORRELATION_ID_HEADER) or generate_correlation_id()
+    set_correlation_id(correlation_id)
     logger.info("Incoming request | method=%s | path=%s", request.method, request.url.path)
-    return await call_next(request)
+    response = await call_next(request)
+    response.headers[CORRELATION_ID_HEADER] = correlation_id
+    return response
 
 @app.get("/health", tags=["health"])
 def health() -> dict[str, str]:
