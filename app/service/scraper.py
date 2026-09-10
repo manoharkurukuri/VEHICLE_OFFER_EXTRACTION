@@ -16,16 +16,24 @@ class ScrapingError(Exception):
 
 
 
+# Signatures that only appear on real anti-bot interstitials. Kept strict so
+# ordinary marketing copy ("your offer is just a moment away"), reCAPTCHA badge
+# CSS, or a cdnjs.cloudflare.com script URL don't trip a false block.
 _BLOCK_MARKERS = (
     "working to keep your website experience safe",
-    "attention required",
-    "just a moment",
-    "checking your browser",
-    "enable javascript and cookies",
-    "__cf_chl",
+    "attention required! | cloudflare",
+    "checking your browser before accessing",
+    "checking if the site connection is secure",
+    "enable javascript and cookies to continue",
+    "please enable cookies to continue",
+    "cf-browser-verification",
     "challenge-platform",
-    "cf-chl",
+    "__cf_chl",
+    "cf_chl_opt",
 )
+
+# Cloudflare's interstitial uses exactly "<title>Just a moment...</title>".
+_CHALLENGE_TITLE_RE = re.compile(r"<title[^>]*>\s*just a moment", re.I)
 
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -64,9 +72,69 @@ def _headless() -> bool:
     }
 
 
+# Injected before any page script runs so anti-bot fingerprinting sees a
+# realistic browser instead of an automated one (webdriver flag, missing
+# plugins/languages, headless chrome runtime, permissions API mismatch).
+_STEALTH_INIT_SCRIPT = r"""
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [1, 2, 3, 4, 5].map((i) => ({ name: 'Plugin ' + i })),
+});
+Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+window.chrome = window.chrome || { runtime: {} };
+const _origQuery = window.navigator.permissions &&
+  window.navigator.permissions.query;
+if (_origQuery) {
+  window.navigator.permissions.query = (parameters) =>
+    parameters && parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : _origQuery(parameters);
+}
+const _getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function (parameter) {
+  if (parameter === 37445) return 'Intel Inc.';
+  if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+  return _getParameter.call(this, parameter);
+};
+"""
+
+_EXTRA_HTTP_HEADERS = {
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Ch-Ua": '"Chromium";v="126", "Google Chrome";v="126", "Not.A/Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+def _simulate_human(page) -> None:
+    """Nudge the mouse/scroll like a real visitor so behavioural challenges
+    (Cloudflare/DataDome) register interaction and release the page."""
+    try:
+        for x, y in ((180, 240), (520, 360), (780, 520), (420, 200)):
+            page.mouse.move(x, y, steps=12)
+            page.wait_for_timeout(220)
+        page.mouse.wheel(0, 600)
+        page.wait_for_timeout(300)
+        page.mouse.wheel(0, -300)
+    except Exception:
+        pass
+
 
 def _is_challenge(html: str) -> bool:
     lowered = html.lower()
+    if _CHALLENGE_TITLE_RE.search(lowered):
+        return True
     return any(marker in lowered for marker in _BLOCK_MARKERS)
 
 
@@ -279,12 +347,11 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
             user_agent=_USER_AGENT,
             viewport={"width": 1366, "height": 900},
             locale="en-US",
+            timezone_id="America/New_York",
+            extra_http_headers=_EXTRA_HTTP_HEADERS,
         )
         page = context.new_page()
-        page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', "
-            "{get: () => undefined})"
-        )
+        page.add_init_script(_STEALTH_INIT_SCRIPT)
 
         try:
             page.goto(
@@ -299,6 +366,7 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
             reloaded = False
 
             while waited < deadline and _is_challenge(_safe_content(page)):
+                _simulate_human(page)
                 page.wait_for_timeout(step)
                 waited += step
                 if not reloaded and waited >= deadline // 2:
@@ -314,7 +382,10 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
             _load_dynamic_content(page)
 
             html = _safe_content(page)
-            if _is_challenge(html):
+            # Only treat as blocked when the challenge is still up AND no real
+            # offer/vehicle content rendered; otherwise a stray marker in the
+            # live page would wrongly fail an already-loaded page.
+            if _is_challenge(html) and not _offers_present(page):
                 raise ScrapingError(
                     "Bot-protection challenge did not clear in Playwright."
                 )
