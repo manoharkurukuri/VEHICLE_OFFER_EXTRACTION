@@ -104,39 +104,51 @@ def handle_scrape_event(event: dict[str, Any]) -> None:
     """Stage B subscriber: resolve the processor for the event's offer type,
     scrape every matching URL, and publish each dealer to the extract broker
     (stage C) as soon as that dealer's URLs finish scraping, so extraction
-    overlaps with the remaining scraping."""
-    excel_path = event["excel_path"]
-    offer_type = event.get("offer_type")
-    processor = get_processor(offer_type)
-    logger.info(
-        "[%s] Scraping dealer URLs | excel_path=%s",
-        processor.offer_type.value,
-        excel_path,
-    )
+    overlaps with the remaining scraping.
 
-    _run_tracker.start()
+    A single outer ``try/finally`` guarantees the run lock is released whenever
+    the run fails before dealers are dispatched to extract — including failures
+    while resolving/initializing the processor (e.g. a missing or invalid LLM
+    key). On success the lock is instead released by ``_run_tracker`` once every
+    dispatched dealer has finished extracting.
+    """
+    excel_path = event.get("excel_path")
+    offer_type = event.get("offer_type")
+    dispatched = False
     try:
+        processor = get_processor(offer_type)
+        logger.info(
+            "[%s] Scraping dealer URLs | excel_path=%s",
+            processor.offer_type.value,
+            excel_path,
+        )
+
+        _run_tracker.start()
         source_file, payloads = processor.scrape(
             excel_path,
             on_dealer_ready=extract_broker.publish,
             on_dealers_enumerated=_run_tracker.set_expected,
         )
+        dispatched = True
+
+        logger.info(
+            "[%s] Scraping stage completed; all dealers dispatched to extract | "
+            "source_file=%s | dealer_count=%d",
+            processor.offer_type.value,
+            source_file,
+            len(payloads),
+        )
     except Exception:
         logger.exception(
-            "[%s] Scraping stage failed | excel_path=%s",
-            processor.offer_type.value,
+            "Scrape stage failed before dealers were dispatched | "
+            "offer_type=%s | excel_path=%s",
+            offer_type,
             excel_path,
         )
-        run_lock.release()
         raise
-
-    logger.info(
-        "[%s] Scraping stage completed; all dealers dispatched to extract | "
-        "source_file=%s | dealer_count=%d",
-        processor.offer_type.value,
-        source_file,
-        len(payloads),
-    )
+    finally:
+        if not dispatched:
+            run_lock.release()
 
 
 def handle_extract_event(event: dict[str, Any]) -> None:

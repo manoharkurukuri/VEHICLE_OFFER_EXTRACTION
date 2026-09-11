@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.offers as offers_module
+import app.events.subscriber as subscriber_module
 from app.events.run_lock import run_lock
 from app.main import app
 
@@ -82,3 +83,27 @@ def test_lock_releases_after_run_completes(client, monkeypatch):
     second = client.post("/api/v1/offers/process", json={"type": "sales_specials"})
     assert second.status_code == 200
     assert second.json()["offer_type"] == "sales_specials"
+
+
+def test_lock_releases_when_processor_init_fails(monkeypatch):
+    """A failure while resolving/initializing the processor (e.g. a missing or
+    invalid LLM key) must still release the run lock so the next run can start."""
+    run_lock.release()
+
+    def _boom(offer_type):
+        raise RuntimeError("Gemini API key is missing")
+
+    monkeypatch.setattr(subscriber_module, "get_processor", _boom)
+
+    acquired, _ = run_lock.acquire("sales_specials")
+    assert acquired
+
+    with pytest.raises(RuntimeError):
+        subscriber_module.handle_scrape_event(
+            {"excel_path": "x.xlsx", "offer_type": "sales_specials"}
+        )
+
+    assert run_lock.current() is None
+    reacquired, _ = run_lock.acquire("sales_specials")
+    assert reacquired
+    run_lock.release()
