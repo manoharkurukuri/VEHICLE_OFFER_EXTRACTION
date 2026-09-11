@@ -11,6 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.config import settings
+from app.core.run_context import start_run
 
 settings.gemini_api_key = SecretStr("test-key")
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
@@ -19,4 +20,5 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key")
 @pytest.fixture(autouse=True)
 def temp_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_storage_dir", str(tmp_path / "storage"))
+    start_run()
     yield

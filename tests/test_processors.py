@@ -1,6 +1,8 @@
 import types
 import zipfile
+from pathlib import Path
 
+from app.core.run_context import get_run_context
 from app.processors.sales_specials_processor import SalesSpecialsProcessor
 from app.processors.used_inventory_processor import UsedInventoryProcessor
 from app.response_templates.used_inventory import InventoryItem, InventoryResponse
@@ -30,7 +32,7 @@ def _payload(offer_type):
     }
 
 
-def test_used_inventory_output_isolated_to_its_own_dir():
+def test_used_inventory_output_written_to_run_folder():
     response = InventoryResponse(
         records=[InventoryItem(title="t", vehicle_name="2025 Ford", price="1", url="u")]
     )
@@ -38,15 +40,15 @@ def test_used_inventory_output_isolated_to_its_own_dir():
 
     result = processor.build_dealer(_payload("used_inventory"))
 
+    run_dir = get_run_context().run_dir
     assert result.zip_path is not None
-    assert "/used_inventory/zip/" in result.zip_path.replace("\\", "/")
-    assert "sales_specials" not in result.zip_path
+    assert Path(result.zip_path).parent == run_dir
     with zipfile.ZipFile(result.zip_path) as archive:
         names = archive.namelist()
     assert any(name.endswith(".json") for name in names)
 
 
-def test_scrape_error_written_to_type_error_dir():
+def test_scrape_error_written_to_run_error_dir():
     processor = UsedInventoryProcessor(service=_fake_service(extract_result=None))
     payload = _payload("used_inventory")
     payload["urls"][0] = {
@@ -58,8 +60,9 @@ def test_scrape_error_written_to_type_error_dir():
 
     result = processor.build_dealer(payload)
 
+    run_dir = get_run_context().run_dir
     assert result.error_file_path is not None
-    assert "/used_inventory/errors/" in result.error_file_path.replace("\\", "/")
+    assert Path(result.error_file_path).parent == run_dir / "errors"
 
 
 def test_sales_specials_processor_delegates_to_real_service():

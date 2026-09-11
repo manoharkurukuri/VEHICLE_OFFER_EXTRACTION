@@ -21,6 +21,7 @@ from app.core.concurrency import ContextThreadPoolExecutor
 from app.core.config import settings
 from app.core.exceptions import FileStorageError
 from app.core.logger import get_logger
+from app.core.run_context import peek_run_context, start_run
 from app.schemas.offer import DealerZipResult, GenerateOffersResult
 from app.service.excel_service import ExcelService
 from app.utils.output_paths import get_error_directory, get_zip_directory
@@ -88,6 +89,8 @@ class OfferGenerationService:
         """Synchronous end-to-end run (used by the CLI): scrape every dealer URL,
         then extract + zip each dealer, dealers processed in parallel."""
         resolved = normalize_offer_type(offer_type)
+        if peek_run_context() is None:
+            start_run()
         source_file, payloads = self.scrape_dealers(excel_path, offer_type=resolved)
 
         dealers: list[DealerZipResult | None] = [None] * len(payloads)

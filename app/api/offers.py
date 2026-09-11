@@ -15,6 +15,7 @@ from app.core.exceptions import (
     OfferRunInProgressError,
     ServiceNotActiveError,
 )
+from app.core.run_context import start_run
 from app.events.broker import scrape_broker
 from app.events.run_lock import run_lock
 
@@ -47,6 +48,7 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
+    run_ctx = start_run()
     scrape_broker.publish({"excel_path": excel_path, "offer_type": offer_type.value})
     return {
         "status": "processing",
@@ -54,6 +56,7 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
         "Offers will be generated in a few minutes.",
         "offer_type": offer_type.value,
         "excel_path": excel_path,
+        "run_id": run_ctx.run_id,
         "correlation_id": get_correlation_id(),
     }
 
@@ -90,6 +93,7 @@ def generate_offers(
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
+    run_ctx = start_run()
     scrape_broker.publish({"excel_path": path, "offer_type": offer_type.value})
     return {
         "status": "processing",
@@ -97,5 +101,6 @@ def generate_offers(
         "Offers will be generated in a few minutes.",
         "offer_type": offer_type.value,
         "excel_path": path,
+        "run_id": run_ctx.run_id,
         "correlation_id": get_correlation_id(),
     }

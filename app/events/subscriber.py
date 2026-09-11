@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 from datetime import datetime
@@ -5,6 +6,7 @@ from typing import Any
 
 from app.config.type_registry import get_processor
 from app.core.logger import get_logger
+from app.core.run_context import get_run_context
 from app.events.broker import extract_broker
 from app.events.run_lock import run_lock
 
@@ -24,6 +26,7 @@ class _RunTracker:
         self._lock = threading.Lock()
         self._start_perf: float | None = None
         self._start_dt: datetime | None = None
+        self._offer_type: str | None = None
         self._expected: int | None = None
         self._completed = 0
         self._total_urls = 0
@@ -33,10 +36,11 @@ class _RunTracker:
         self._total_scrape_errors = 0
         self._finalized = False
 
-    def start(self) -> None:
+    def start(self, offer_type: str | None = None) -> None:
         with self._lock:
             self._start_perf = time.perf_counter()
             self._start_dt = datetime.now()
+            self._offer_type = offer_type
             self._expected = None
             self._completed = 0
             self._total_urls = 0
@@ -94,7 +98,51 @@ class _RunTracker:
             self._total_no_offers,
             self._total_scrape_errors,
         )
+        self._write_summary(end_dt, duration, status="completed")
         run_lock.release()
+
+    def _write_summary(
+        self, end_dt: datetime, duration: float, status: str
+    ) -> None:
+        """Write ``run_summary.json`` into the active run's output folder."""
+        try:
+            ctx = get_run_context()
+            ctx.run_dir.mkdir(parents=True, exist_ok=True)
+            summary = {
+                "run_id": ctx.run_id,
+                "offer_type": self._offer_type,
+                "status": status,
+                "started_at": (
+                    self._start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    if self._start_dt
+                    else None
+                ),
+                "ended_at": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": round(duration, 2),
+                "dealer_count": self._completed,
+                "total_urls_processed": self._total_urls,
+                "total_urls_succeeded": self._total_urls_succeeded,
+                "total_urls_error": self._total_urls_error,
+                "no_offers_extracted": self._total_no_offers,
+                "scraping_error_count": self._total_scrape_errors,
+            }
+            (ctx.run_dir / "run_summary.json").write_text(
+                json.dumps(summary, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            logger.exception("Failed to write run_summary.json")
+
+    def fail(self, reason: str) -> None:
+        """Finalize a run that failed before any dealer was dispatched."""
+        with self._lock:
+            if self._finalized:
+                return
+            self._finalized = True
+            end_dt = datetime.now()
+            duration = (
+                time.perf_counter() - self._start_perf if self._start_perf else 0.0
+            )
+            self._write_summary(end_dt, duration, status=f"failed: {reason}")
 
 
 _run_tracker = _RunTracker()
@@ -123,7 +171,7 @@ def handle_scrape_event(event: dict[str, Any]) -> None:
             excel_path,
         )
 
-        _run_tracker.start()
+        _run_tracker.start(processor.offer_type.value)
         source_file, payloads = processor.scrape(
             excel_path,
             on_dealer_ready=extract_broker.publish,
@@ -148,6 +196,7 @@ def handle_scrape_event(event: dict[str, Any]) -> None:
         raise
     finally:
         if not dispatched:
+            _run_tracker.fail("scrape stage failed before dealers were dispatched")
             run_lock.release()
 
 

@@ -29,6 +29,7 @@ from app.config.offer_types import DEFAULT_OFFER_TYPE, OfferType
 from app.core.concurrency import ContextThreadPoolExecutor
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.core.run_context import peek_run_context, start_run
 from app.schemas.offer import DealerZipResult, GenerateOffersResult
 from app.service.offer_generation_service import OfferGenerationService
 from app.utils.output_paths import get_error_directory, get_zip_directory
@@ -216,6 +217,8 @@ class BaseProcessor:
     def process(self, excel_path: str | Path) -> GenerateOffersResult:
         prefix = f"[{self.offer_type.value}]"
         logger.info("%s Starting extraction | excel_path=%s", prefix, str(excel_path))
+        if peek_run_context() is None:
+            start_run()
         source_file, payloads = self.scrape(excel_path)
 
         dealers: list[DealerZipResult | None] = [None] * len(payloads)

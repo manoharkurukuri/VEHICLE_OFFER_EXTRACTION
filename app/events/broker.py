@@ -6,6 +6,11 @@ from typing import Any
 from app.core.config import settings
 from app.core.correlation import get_correlation_id, set_correlation_id
 from app.core.logger import get_logger
+from app.core.run_context import (
+    RunContext,
+    peek_run_context,
+    set_run_context,
+)
 
 Event = dict[str, Any]
 Handler = Callable[[Event], None]
@@ -14,6 +19,7 @@ logger = get_logger(__name__)
 
 _STOP = object()
 _CORRELATION_KEY = "__correlation_id__"
+_RUN_CONTEXT_KEY = "__run_context__"
 
 
 class InMemoryBroker:
@@ -38,6 +44,9 @@ class InMemoryBroker:
 
     def publish(self, event: Event) -> None:
         event.setdefault(_CORRELATION_KEY, get_correlation_id())
+        run_ctx = peek_run_context()
+        if run_ctx is not None:
+            event.setdefault(_RUN_CONTEXT_KEY, run_ctx.to_dict())
         self._queue.put(event)
         logger.info("Event published | broker=%s", self.name)
 
@@ -70,6 +79,10 @@ class InMemoryBroker:
                     )
                     continue
                 set_correlation_id(event.get(_CORRELATION_KEY, "-"))
+                run_data = event.get(_RUN_CONTEXT_KEY)
+                set_run_context(
+                    RunContext.from_dict(run_data) if run_data else None
+                )
                 self._handler(event)
             except Exception as exc:
                 logger.error(

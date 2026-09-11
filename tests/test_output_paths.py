@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.config.offer_types import OfferType
+from app.core.run_context import get_run_context, start_run
 from app.utils.output_paths import (
     get_error_directory,
     get_output_directory,
@@ -8,22 +8,24 @@ from app.utils.output_paths import (
 )
 
 
-def test_output_directories_are_type_scoped():
-    zip_dir = get_zip_directory(OfferType.USED_INVENTORY)
-    err_dir = get_error_directory(OfferType.USED_INVENTORY)
-    base = get_output_directory(OfferType.USED_INVENTORY)
+def test_output_directories_are_run_scoped():
+    ctx = get_run_context()
+    base = get_output_directory()
+    zip_dir = get_zip_directory()
+    err_dir = get_error_directory()
 
-    assert zip_dir.parent == base
-    assert err_dir.parent == base
-    assert base.name == "used_inventory"
-    assert zip_dir.name == "zip"
+    assert base == ctx.run_dir
+    assert zip_dir == ctx.run_dir
+    assert err_dir.parent == ctx.run_dir
     assert err_dir.name == "errors"
-    assert zip_dir.is_dir() and err_dir.is_dir()
+    assert base.name.endswith(ctx.run_id)
+    assert base.is_dir() and err_dir.is_dir()
 
 
-def test_types_do_not_share_directories():
-    sales_zip = get_zip_directory("sales_specials")
-    service_zip = get_zip_directory("service_specials")
-    assert sales_zip != service_zip
-    assert Path(sales_zip).parent.name == "sales_specials"
-    assert Path(service_zip).parent.name == "service_specials"
+def test_separate_runs_use_separate_folders():
+    first = get_output_directory()
+    start_run()
+    second = get_output_directory()
+
+    assert first != second
+    assert Path(first).name != Path(second).name
