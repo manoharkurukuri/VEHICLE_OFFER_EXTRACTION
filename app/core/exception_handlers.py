@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.correlation import get_correlation_id
 from app.core.exceptions import AppException
 from app.core.logger import get_logger
 
@@ -24,6 +25,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": exc.code,
                     "message": exc.message,
+                    "correlation_id": get_correlation_id(),
                 }
             },
         )

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -8,7 +10,11 @@ from app.config.offer_types import (
 )
 from app.core.config import settings
 from app.core.correlation import get_correlation_id
-from app.core.exceptions import OfferRunInProgressError, ServiceNotActiveError
+from app.core.exceptions import (
+    ExcelFileNotFoundError,
+    OfferRunInProgressError,
+    ServiceNotActiveError,
+)
 from app.events.broker import scrape_broker
 from app.events.run_lock import run_lock
 
@@ -36,6 +42,8 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
     if not settings.is_service_active(offer_type.value):
         raise ServiceNotActiveError(offer_type.value)
     excel_path = request.path or settings.default_excel_path
+    if not Path(excel_path).is_file():
+        raise ExcelFileNotFoundError(excel_path, get_correlation_id())
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
@@ -77,6 +85,8 @@ def generate_offers(
     if not settings.is_service_active(offer_type.value):
         raise ServiceNotActiveError(offer_type.value)
     path = excel_path or settings.default_excel_path
+    if not Path(path).is_file():
+        raise ExcelFileNotFoundError(path, get_correlation_id())
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")

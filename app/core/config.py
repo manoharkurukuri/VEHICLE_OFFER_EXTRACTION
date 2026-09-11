@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     scraper_max_workers: int = 5
     dealer_extract_workers: int = 5
 
-    default_excel_path: str = "offers/status_ex.xlxs"
+    default_excel_path: str = "offers/vehicle_dealers.xlsx"
 
     sales_specials: bool = True
     service_specials: bool = False

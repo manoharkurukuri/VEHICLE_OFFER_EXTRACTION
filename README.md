@@ -63,7 +63,7 @@ GEMINI_API_KEY=your-gemini-api-key-here
 SCRAPER_MAX_WORKERS=5
 DEALER_EXTRACT_WORKERS=5
 LOCAL_STORAGE_DIR=./storage/offers
-DEFAULT_EXCEL_PATH=offers/MWK00012GMC_Dealership_URLs.xlsx
+DEFAULT_EXCEL_PATH=offers/vehicle_dealers.xlsx
 
 # Service activation (only sales_specials is on)
 sales_specials=true
@@ -98,7 +98,7 @@ curl -X POST "http://localhost:8000/api/v1/offers/process" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "sales_specials",
-    "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx"
+    "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/vehicle_dealers.xlsx"
   }'
 ```
 
@@ -108,7 +108,7 @@ curl -X POST "http://localhost:8000/api/v1/offers/process" \
 curl -X POST "http://localhost:8000/api/v1/offers/process" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/example.xlsx"
+    "path": "/Users/Mkurikur/Documents/voe/VEHICLE_OFFER_EXTRACTION/offers/vehicle_dealers.xlsx"
   }'
 ```
 
@@ -119,7 +119,7 @@ Success response:
   "status": "processing",
   "message": "Your request has been accepted and is being processed. Offers will be generated in a few minutes.",
   "offer_type": "sales_specials",
-  "excel_path": "offers/example.xlsx"
+  "excel_path": "offers/vehicle_dealers.xlsx"
 }
 ```
 
@@ -168,8 +168,8 @@ curl "http://localhost:8000/api/v1/offers/types"
 `GET /generate` still works and defaults to `sales_specials`:
 
 ```bash
-curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/example.xlsx"
-curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/example.xlsx&type=sales_specials"
+curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/vehicle_dealers.xlsx"
+curl "http://localhost:8000/api/v1/offers/generate?excel_path=offers/vehicle_dealers.xlsx&type=sales_specials"
 ```
 
 ---

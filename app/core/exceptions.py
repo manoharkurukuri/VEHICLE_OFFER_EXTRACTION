@@ -12,6 +12,16 @@ class CompanyNotFoundError(AppException):
     code = "company_not_found"
 
 
+class ExcelFileNotFoundError(AppException):
+    status_code = 404
+    code = "excel_file_not_found"
+
+    def __init__(self, path: str, correlation_id: str | None = None) -> None:
+        self.path = path
+        self.correlation_id = correlation_id
+        super().__init__(f"The input file '{path}' does not exist.")
+
+
 class ScrapingError(AppException):
     status_code = 502
     code = "scraping_failed"
