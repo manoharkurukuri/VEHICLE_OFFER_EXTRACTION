@@ -119,8 +119,49 @@ Success response:
   "status": "processing",
   "message": "Your request has been accepted and is being processed. Offers will be generated in a few minutes.",
   "offer_type": "sales_specials",
-  "excel_path": "offers/vehicle_dealers.xlsx"
+  "excel_path": "offers/vehicle_dealers.xlsx",
+  "run_id": "9de5b992c3f1",
+  "output_dir": "storage/offers/20260911_163216_9de5b992c3f1",
+  "correlation_id": "voe_df741bbb78a747d3a7b0a5d4bb92da5c"
 }
+```
+
+Use the returned `run_id` to poll the run's final status (see below).
+
+### Check a run's status (`GET /runs/{run_id}`)
+
+Every run writes a `run_summary.json` into its output folder and exposes it here,
+so you can always answer: did it finish, did it fail, how many URLs succeeded /
+failed, and where the output files are. `status` is one of `queued`, `running`,
+`completed`, `completed_with_errors`, or `failed`.
+
+```bash
+curl "http://localhost:8000/api/v1/offers/runs/9de5b992c3f1"
+```
+```json
+{
+  "run_id": "9de5b992c3f1",
+  "offer_type": "sales_specials",
+  "status": "completed_with_errors",
+  "dealer_correlation_id": "voe_df741bbb78a747d3a7b0a5d4bb92da5c",
+  "output_dir": "storage/offers/20260911_163216_9de5b992c3f1",
+  "total_urls": 60,
+  "successful": 57,
+  "failed": 3,
+  "started_at": "2026-09-11 16:32:16",
+  "ended_at": "2026-09-11 16:33:04",
+  "duration_seconds": 47.8,
+  "dealer_count": 12,
+  "no_offers_extracted": 0,
+  "scraping_error_count": 1
+}
+```
+
+Unknown `run_id` → HTTP 404 (`run_not_found`):
+
+```json
+{"error":{"code":"run_not_found",
+  "message":"No run found with id 'abc123'."}}
 ```
 
 ### Inactive type → HTTP 403 (`service_not_active`)
