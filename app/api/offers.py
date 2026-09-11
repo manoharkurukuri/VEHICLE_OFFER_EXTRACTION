@@ -13,11 +13,14 @@ from app.core.correlation import get_correlation_id
 from app.core.exceptions import (
     ExcelFileNotFoundError,
     OfferRunInProgressError,
+    RunNotFoundError,
     ServiceNotActiveError,
 )
 from app.core.run_context import start_run
 from app.events.broker import scrape_broker
 from app.events.run_lock import run_lock
+from app.events.subscriber import mark_run_queued
+from app.service.run_summary_service import read_run_summary
 
 router = APIRouter(prefix=f"{settings.api_v1_prefix}/offers", tags=["offers"])
 
@@ -49,6 +52,7 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
     run_ctx = start_run()
+    mark_run_queued(offer_type.value)
     scrape_broker.publish({"excel_path": excel_path, "offer_type": offer_type.value})
     return {
         "status": "processing",
@@ -57,6 +61,7 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
         "offer_type": offer_type.value,
         "excel_path": excel_path,
         "run_id": run_ctx.run_id,
+        "output_dir": str(run_ctx.run_dir),
         "correlation_id": get_correlation_id(),
     }
 
@@ -69,6 +74,21 @@ def list_types() -> dict[str, object]:
         "default": DEFAULT_OFFER_TYPE.value,
         "correlation_id": get_correlation_id(),
     }
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str) -> dict[str, object]:
+    """Return the persisted status + counts for a run.
+
+    Answers, for any run: did it finish, did it fail, how many URLs succeeded /
+    failed, and where the output files are (``output_dir``). Returns 404 if no
+    run with ``run_id`` exists.
+    """
+    summary = read_run_summary(run_id)
+    if summary is None:
+        raise RunNotFoundError(run_id)
+    return {**summary, "correlation_id": get_correlation_id()}
+
 
 
 @router.get("/generate")
@@ -94,6 +114,7 @@ def generate_offers(
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
     run_ctx = start_run()
+    mark_run_queued(offer_type.value)
     scrape_broker.publish({"excel_path": path, "offer_type": offer_type.value})
     return {
         "status": "processing",
@@ -102,5 +123,6 @@ def generate_offers(
         "offer_type": offer_type.value,
         "excel_path": path,
         "run_id": run_ctx.run_id,
+        "output_dir": str(run_ctx.run_dir),
         "correlation_id": get_correlation_id(),
     }

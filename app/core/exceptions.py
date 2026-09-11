@@ -71,3 +71,12 @@ class OfferRunInProgressError(AppException):
             f"An offer-generation run for '{running_offer_type}' is currently "
             f"running. Please wait until it completes before starting another."
         )
+
+
+class RunNotFoundError(AppException):
+    status_code = 404
+    code = "run_not_found"
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        super().__init__(f"No run found with id '{run_id}'.")
