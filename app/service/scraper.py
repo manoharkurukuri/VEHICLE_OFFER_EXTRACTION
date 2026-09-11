@@ -354,11 +354,14 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
         page.add_init_script(_STEALTH_INIT_SCRIPT)
 
         try:
-            page.goto(
+            response = page.goto(
                 url,
                 wait_until="domcontentloaded",
                 timeout=timeout * 1000,
             )
+            # Track the final server status so a 4xx/5xx error page never gets
+            # scraped and handed to the LLM as if it were a real offer page.
+            status = response.status if response is not None else None
 
             deadline = timeout * 1000
             waited = 0
@@ -372,12 +375,24 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
                 if not reloaded and waited >= deadline // 2:
                     reloaded = True
                     try:
-                        page.reload(
+                        reload_response = page.reload(
                             wait_until="domcontentloaded",
                             timeout=timeout * 1000,
                         )
+                        if reload_response is not None:
+                            status = reload_response.status
                     except Exception:
                         pass
+
+            # A genuine 4xx/5xx (404 Not Found, 500 Server Error, etc.) is not a
+            # bot challenge and will not clear on retry, so fail this URL with a
+            # meaningful reason instead of scraping the error page. Bot-protection
+            # challenges (often 403) are handled by the loop above / the check
+            # below, which can clear to a 200 on reload.
+            if status is not None and status >= 400:
+                raise ScrapingError(
+                    f"HTTP {status} error response for {url}; page not scraped."
+                )
 
             _load_dynamic_content(page)
 
