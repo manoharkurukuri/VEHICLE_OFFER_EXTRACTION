@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Query
@@ -12,7 +13,9 @@ from app.core.config import settings
 from app.core.correlation import get_correlation_id
 from app.core.exceptions import (
     ExcelFileNotFoundError,
+    LLMConfigurationError,
     OfferRunInProgressError,
+    OutputDirectoryError,
     RunNotFoundError,
     ServiceNotActiveError,
 )
@@ -28,6 +31,29 @@ router = APIRouter(prefix=f"{settings.api_v1_prefix}/offers", tags=["offers"])
 class ProcessRequest(BaseModel):
     type: str | None = None
     path: str | None = None
+
+
+def _validate_run_config(excel_path: str) -> None:
+    """Fail fast on required configuration before a run is accepted.
+
+    Rejects the request immediately (instead of starting a background job we
+    already know cannot succeed) when the Gemini key is missing, the input
+    workbook is absent, or the output directory cannot be created/written.
+    The offer type is already validated by the caller.
+    """
+    if settings.llm_provider == "gemini" and not settings.resolved_api_keys():
+        raise LLMConfigurationError(correlation_id=get_correlation_id())
+    if not Path(excel_path).is_file():
+        raise ExcelFileNotFoundError(excel_path, get_correlation_id())
+    output_dir = Path(settings.local_storage_dir)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OutputDirectoryError(
+            str(output_dir), get_correlation_id()
+        ) from exc
+    if not os.access(output_dir, os.W_OK):
+        raise OutputDirectoryError(str(output_dir), get_correlation_id())
 
 
 @router.post("/process")
@@ -46,8 +72,7 @@ def process_offers(request: ProcessRequest) -> dict[str, str]:
     if not settings.is_service_active(offer_type.value):
         raise ServiceNotActiveError(offer_type.value)
     excel_path = request.path or settings.default_excel_path
-    if not Path(excel_path).is_file():
-        raise ExcelFileNotFoundError(excel_path, get_correlation_id())
+    _validate_run_config(excel_path)
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")
@@ -108,8 +133,7 @@ def generate_offers(
     if not settings.is_service_active(offer_type.value):
         raise ServiceNotActiveError(offer_type.value)
     path = excel_path or settings.default_excel_path
-    if not Path(path).is_file():
-        raise ExcelFileNotFoundError(path, get_correlation_id())
+    _validate_run_config(path)
     acquired, running = run_lock.acquire(offer_type.value)
     if not acquired:
         raise OfferRunInProgressError(running or "unknown")

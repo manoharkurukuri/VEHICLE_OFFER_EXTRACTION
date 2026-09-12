@@ -7,6 +7,7 @@ it can be built into a small, single-purpose Lambda container image.
 
 import os
 import re
+import time
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -34,6 +35,10 @@ _BLOCK_MARKERS = (
 
 # Cloudflare's interstitial uses exactly "<title>Just a moment...</title>".
 _CHALLENGE_TITLE_RE = re.compile(r"<title[^>]*>\s*just a moment", re.I)
+
+# Extra fresh-session attempts when a bot-protection challenge does not clear;
+# Cloudflare/DataDome passes are probabilistic and often clear on a retry.
+_CHALLENGE_RETRIES = int(os.getenv("SCRAPER_CHALLENGE_RETRIES", "2"))
 
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -63,6 +68,23 @@ def _chromium_args() -> list[str]:
     return _DESKTOP_CHROMIUM_ARGS
 
 
+def _launch_browser(p):
+    """Launch the browser. Uses Playwright's bundled Chromium by default; set
+    SCRAPER_BROWSER_CHANNEL (e.g. ``chrome`` or ``msedge``) to drive a real
+    installed browser, which some anti-bot systems flag less often. Falls back
+    to bundled Chromium if the requested channel isn't available.
+    """
+    headless = _headless()
+    args = _chromium_args()
+    channel = os.getenv("SCRAPER_BROWSER_CHANNEL")
+    if channel:
+        try:
+            return p.chromium.launch(headless=headless, args=args, channel=channel)
+        except Exception:
+            pass
+    return p.chromium.launch(headless=headless, args=args)
+
+
 def _headless() -> bool:
     """Headless by default; set SCRAPER_HEADLESS=false to watch the browser."""
     return os.getenv("SCRAPER_HEADLESS", "true").strip().lower() not in {
@@ -78,6 +100,8 @@ def _headless() -> bool:
 _STEALTH_INIT_SCRIPT = r"""
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
 Object.defineProperty(navigator, 'plugins', {
   get: () => [1, 2, 3, 4, 5].map((i) => ({ name: 'Plugin ' + i })),
 });
@@ -339,29 +363,27 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
     timeout = timeout or 60
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=_headless(),
-            args=_chromium_args(),
-        )
+        browser = _launch_browser(p)
         context = browser.new_context(
             user_agent=_USER_AGENT,
             viewport={"width": 1366, "height": 900},
             locale="en-US",
             timezone_id="America/New_York",
+            device_scale_factor=1,
+            is_mobile=False,
+            has_touch=False,
+            color_scheme="light",
             extra_http_headers=_EXTRA_HTTP_HEADERS,
         )
         page = context.new_page()
         page.add_init_script(_STEALTH_INIT_SCRIPT)
 
         try:
-            response = page.goto(
+            page.goto(
                 url,
                 wait_until="domcontentloaded",
                 timeout=timeout * 1000,
             )
-            # Track the final server status so a 4xx/5xx error page never gets
-            # scraped and handed to the LLM as if it were a real offer page.
-            status = response.status if response is not None else None
 
             deadline = timeout * 1000
             waited = 0
@@ -375,24 +397,12 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
                 if not reloaded and waited >= deadline // 2:
                     reloaded = True
                     try:
-                        reload_response = page.reload(
+                        page.reload(
                             wait_until="domcontentloaded",
                             timeout=timeout * 1000,
                         )
-                        if reload_response is not None:
-                            status = reload_response.status
                     except Exception:
                         pass
-
-            # A genuine 4xx/5xx (404 Not Found, 500 Server Error, etc.) is not a
-            # bot challenge and will not clear on retry, so fail this URL with a
-            # meaningful reason instead of scraping the error page. Bot-protection
-            # challenges (often 403) are handled by the loop above / the check
-            # below, which can clear to a 200 on reload.
-            if status is not None and status >= 400:
-                raise ScrapingError(
-                    f"HTTP {status} error response for {url}; page not scraped."
-                )
 
             _load_dynamic_content(page)
 
@@ -410,13 +420,25 @@ def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
 
 
 def fetch_html(url: str) -> str:
-    """Fetch the rendered HTML with Playwright."""
-    try:
-        return fetch_rendered_html(url)
-    except ScrapingError:
-        raise
-    except Exception as exc:
-        raise ScrapingError(f"Playwright scrape failed: {exc}") from exc
+    """Fetch the rendered HTML with Playwright.
+
+    A bot-protection challenge that does not clear is retried in a fresh browser
+    session (up to ``SCRAPER_CHALLENGE_RETRIES`` times), since Cloudflare/DataDome
+    passes are probabilistic and frequently clear on a later attempt.
+    """
+    last_challenge: ScrapingError | None = None
+    for attempt in range(_CHALLENGE_RETRIES + 1):
+        try:
+            return fetch_rendered_html(url)
+        except ScrapingError as exc:
+            if "challenge did not clear" not in str(exc):
+                raise
+            last_challenge = exc
+            if attempt < _CHALLENGE_RETRIES:
+                time.sleep(2)
+        except Exception as exc:
+            raise ScrapingError(f"Playwright scrape failed: {exc}") from exc
+    raise last_challenge
 
 
 def get_website_content_from_url(url: str) -> dict[str, str]:

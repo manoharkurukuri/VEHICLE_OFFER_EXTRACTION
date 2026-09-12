@@ -47,6 +47,35 @@ class ConfigurationError(AppException):
     code = "configuration_error"
 
 
+class LLMConfigurationError(AppException):
+    status_code = 500
+    code = "llm_configuration_error"
+
+    def __init__(
+        self, message: str | None = None, correlation_id: str | None = None
+    ) -> None:
+        self.correlation_id = correlation_id
+        super().__init__(
+            message
+            or (
+                "The Gemini API key is not configured. Set GEMINI_API_KEY "
+                "(or GEMINI_API_KEYS) before starting a run."
+            )
+        )
+
+
+class OutputDirectoryError(AppException):
+    status_code = 500
+    code = "output_directory_error"
+
+    def __init__(self, path: str, correlation_id: str | None = None) -> None:
+        self.path = path
+        self.correlation_id = correlation_id
+        super().__init__(
+            f"The output directory '{path}' cannot be created or written to."
+        )
+
+
 class UnsupportedOfferTypeError(AppException):
     status_code = 400
     code = "unsupported_offer_type"

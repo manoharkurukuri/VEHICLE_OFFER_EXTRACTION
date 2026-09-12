@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import app.api.offers as offers_module
 import app.events.subscriber as subscriber_module
@@ -16,6 +17,15 @@ def client(monkeypatch):
     run_lock.release()
 
 
+@pytest.fixture
+def excel_file(tmp_path):
+    """A real workbook path so config validation passes; contents are never
+    parsed because ``scrape_broker.publish`` is stubbed in the ``client`` fixture."""
+    path = tmp_path / "dealers.xlsx"
+    path.write_bytes(b"")
+    return str(path)
+
+
 def test_list_types(client):
     resp = client.get("/api/v1/offers/types")
     assert resp.status_code == 200
@@ -24,16 +34,16 @@ def test_list_types(client):
     assert "used_inventory" in body["supported"]
 
 
-def test_process_defaults_to_sales_specials(client):
-    resp = client.post("/api/v1/offers/process", json={"path": "x.xlsx"})
+def test_process_defaults_to_sales_specials(client, excel_file):
+    resp = client.post("/api/v1/offers/process", json={"path": excel_file})
     assert resp.status_code == 200
     assert resp.json()["offer_type"] == "sales_specials"
 
 
-def test_process_explicit_type(client):
+def test_process_explicit_type(client, excel_file):
     resp = client.post(
         "/api/v1/offers/process",
-        json={"type": "sales_specials", "path": "x.xlsx"},
+        json={"type": "sales_specials", "path": excel_file},
     )
     assert resp.status_code == 200
     assert resp.json()["offer_type"] == "sales_specials"
@@ -60,14 +70,46 @@ def test_process_invalid_type_returns_error(client):
     assert "sales_specials" in message
 
 
-def test_second_request_while_running_is_rejected(client):
+def test_missing_excel_file_returns_404(client):
+    resp = client.post(
+        "/api/v1/offers/process",
+        json={"type": "sales_specials", "path": "does-not-exist.xlsx"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "excel_file_not_found"
+
+
+def test_missing_gemini_key_returns_error(client, excel_file, monkeypatch):
+    monkeypatch.setattr(offers_module.settings, "gemini_api_key", SecretStr(""))
+    monkeypatch.setattr(offers_module.settings, "gemini_api_keys", SecretStr(""))
+    resp = client.post(
+        "/api/v1/offers/process",
+        json={"type": "sales_specials", "path": excel_file},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "llm_configuration_error"
+
+
+def test_unwritable_output_dir_returns_error(client, excel_file, monkeypatch):
+    monkeypatch.setattr(
+        offers_module.settings, "local_storage_dir", "/proc/nope/storage"
+    )
+    resp = client.post(
+        "/api/v1/offers/process",
+        json={"type": "sales_specials", "path": excel_file},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "output_directory_error"
+
+
+def test_second_request_while_running_is_rejected(client, excel_file):
     first = client.post(
-        "/api/v1/offers/process", json={"type": "sales_specials", "path": "x.xlsx"}
+        "/api/v1/offers/process", json={"type": "sales_specials", "path": excel_file}
     )
     assert first.status_code == 200
 
     second = client.post(
-        "/api/v1/offers/process", json={"type": "sales_specials", "path": "y.xlsx"}
+        "/api/v1/offers/process", json={"type": "sales_specials", "path": excel_file}
     )
     assert second.status_code == 409
     body = second.json()["error"]
