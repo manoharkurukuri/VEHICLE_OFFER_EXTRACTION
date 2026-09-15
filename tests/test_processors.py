@@ -2,7 +2,7 @@ import types
 import zipfile
 from pathlib import Path
 
-from app.core.run_context import get_run_context
+from app.core.run_context import get_run_context, start_run
 from app.processors.sales_specials_processor import SalesSpecialsProcessor
 from app.processors.used_inventory_processor import UsedInventoryProcessor
 from app.response_templates.used_inventory import InventoryItem, InventoryResponse
@@ -77,3 +77,27 @@ def test_sales_specials_processor_delegates_to_real_service():
 
     assert result is sentinel
     assert captured["offer_type"] == "sales_specials"
+
+
+def test_case7_same_dealer_twice_same_day_outputs_do_not_mix():
+    """Case 7: the same dealer processed twice on the same day writes into two
+    separate run folders, so the two runs' outputs never mix."""
+    response = InventoryResponse(
+        records=[InventoryItem(title="t", vehicle_name="2025 Ford", price="1", url="u")]
+    )
+    processor = UsedInventoryProcessor(service=_fake_service(extract_result=response))
+    payload = _payload("used_inventory")
+
+    first_ctx = start_run()
+    first = processor.build_dealer(payload)
+
+    second_ctx = start_run()
+    second = processor.build_dealer(payload)
+
+    assert first_ctx.run_dir != second_ctx.run_dir
+    assert first.zip_path is not None and second.zip_path is not None
+    assert Path(first.zip_path).parent == first_ctx.run_dir
+    assert Path(second.zip_path).parent == second_ctx.run_dir
+    assert first.zip_path != second.zip_path
+    assert Path(first.zip_path).exists()
+    assert Path(second.zip_path).exists()

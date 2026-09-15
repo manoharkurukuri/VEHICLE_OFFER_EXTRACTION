@@ -369,23 +369,319 @@ flowchart TD
 
 ## Tests
 
+**38 tests total** — 35 run by default (fast, fully offline: no network, no
+browser, no LLM), and **3 are opt-in live checks** that are skipped unless you
+explicitly enable them (see [Opt-in live checks](#opt-in-live-checks)).
+
+### Run everything
+
 ```bash
 pytest -q
 ```
 
-**22 tests** cover the full API surface and type routing:
+Runs the whole offline suite. Use this before every commit — it verifies the API
+surface, type routing, Excel filtering, output isolation, and the full run
+lifecycle (lock, run status, failure handling) without touching the internet.
 
-| Test file | What it verifies |
-|-----------|------------------|
-| `tests/test_offer_types.py` | Default resolves to `sales_specials`; label/alias normalization; unsupported type raises with the allowed list. |
-| `tests/test_api.py` | `/types` listing; default → `sales_specials`; explicit active type; **inactive type → 403**; invalid type → 400; single-run lock → 409; lock release after a run completes. |
-| `tests/test_filtering.py` | Excel rows filtered by type label; `Homepage`/`Contact Us`/`Map` skipped. |
-| `tests/test_processors.py` | Sales Specials delegates to the original extraction logic; per-type processor wiring. |
-| `tests/test_output_paths.py` | Output isolation — each type writes only under its own `zip/` and `errors/` folder. |
+### Run every test individually
 
-Run a single file or test:
+Each test below has its **own command in its own box** with a short explanation of
+what it proves and how to run it. Running one test at a time is the fastest way to
+reproduce or debug a single behavior.
+
+#### `tests/test_offer_types.py` — type resolution
+
+No type in the request resolves to the default, `sales_specials`:
 
 ```bash
-pytest tests/test_api.py -q
+pytest tests/test_offer_types.py::test_default_is_sales_specials -q
+```
+
+Both the internal value (`sales_specials`) and the Excel label (`Sales Specials`) resolve to the same type:
+
+```bash
+pytest tests/test_offer_types.py::test_normalize_accepts_internal_and_labels -q
+```
+
+The list of supported types is complete and correct:
+
+```bash
+pytest tests/test_offer_types.py::test_supported_values -q
+```
+
+An unknown type raises an error that lists the allowed values:
+
+```bash
+pytest tests/test_offer_types.py::test_invalid_type_raises_with_allowed_list -q
+```
+
+#### `tests/test_api.py` — HTTP contract
+
+`GET /types` returns the supported list plus the default:
+
+```bash
+pytest tests/test_api.py::test_list_types -q
+```
+
+`POST /process` with no type falls back to `sales_specials`:
+
+```bash
+pytest tests/test_api.py::test_process_defaults_to_sales_specials -q
+```
+
+`POST /process` with an explicit active type is accepted:
+
+```bash
+pytest tests/test_api.py::test_process_explicit_type -q
+```
+
+An inactive type is rejected with **403 `service_not_active`**:
+
+```bash
 pytest tests/test_api.py::test_inactive_service_returns_403 -q
 ```
+
+An invalid type is rejected with **400 `unsupported_offer_type`**:
+
+```bash
+pytest tests/test_api.py::test_process_invalid_type_returns_error -q
+```
+
+A missing workbook returns **404 `excel_file_not_found`**:
+
+```bash
+pytest tests/test_api.py::test_missing_excel_file_returns_404 -q
+```
+
+A missing Gemini key returns **500 `llm_configuration_error`**:
+
+```bash
+pytest tests/test_api.py::test_missing_gemini_key_returns_error -q
+```
+
+An unwritable storage dir returns **500 `output_directory_error`**:
+
+```bash
+pytest tests/test_api.py::test_unwritable_output_dir_returns_error -q
+```
+
+A second request while a run is active is rejected with **409 `offer_run_in_progress`**:
+
+```bash
+pytest tests/test_api.py::test_second_request_while_running_is_rejected -q
+```
+
+The single-run lock frees up after a run finishes:
+
+```bash
+pytest tests/test_api.py::test_lock_releases_after_run_completes -q
+```
+
+The lock frees up even when processor initialization fails:
+
+```bash
+pytest tests/test_api.py::test_lock_releases_when_processor_init_fails -q
+```
+
+#### `tests/test_filtering.py` — Excel row filtering
+
+By default only `Sales Specials` rows are scraped:
+
+```bash
+pytest tests/test_filtering.py::test_default_processes_only_sales_specials -q
+```
+
+An explicit type keeps only that type's rows:
+
+```bash
+pytest tests/test_filtering.py::test_explicit_type_filters_rows -q
+```
+
+`Homepage` / `Contact Us` / `Map` rows are skipped, never errored:
+
+```bash
+pytest tests/test_filtering.py::test_unsupported_rows_are_skipped_not_failed -q
+```
+
+Dealers with `status=False` are excluded:
+
+```bash
+pytest tests/test_filtering.py::test_status_false_dealers_are_excluded -q
+```
+
+The `status` column accepts string values like `"TRUE"` / `"false"`:
+
+```bash
+pytest tests/test_filtering.py::test_status_accepts_string_true -q
+```
+
+The `status` column accepts numeric `1` / `0`:
+
+```bash
+pytest tests/test_filtering.py::test_status_accepts_numeric_0_and_1 -q
+```
+
+#### `tests/test_processors.py` — per-type behavior + isolation
+
+A dealer's output ZIP is written into the active run folder:
+
+```bash
+pytest tests/test_processors.py::test_used_inventory_output_written_to_run_folder -q
+```
+
+Scrape errors are written to the run's `errors/` directory:
+
+```bash
+pytest tests/test_processors.py::test_scrape_error_written_to_run_error_dir -q
+```
+
+Sales Specials delegates to the real extraction service:
+
+```bash
+pytest tests/test_processors.py::test_sales_specials_processor_delegates_to_real_service -q
+```
+
+The same dealer processed twice on the same day writes to separate run folders (outputs never mix):
+
+```bash
+pytest tests/test_processors.py::test_case7_same_dealer_twice_same_day_outputs_do_not_mix -q
+```
+
+#### `tests/test_output_paths.py` — output isolation
+
+Output paths are scoped to the active run:
+
+```bash
+pytest tests/test_output_paths.py::test_output_directories_are_run_scoped -q
+```
+
+Two separate runs never share a folder:
+
+```bash
+pytest tests/test_output_paths.py::test_separate_runs_use_separate_folders -q
+```
+
+#### `tests/test_reliability.py` — run lifecycle at the real (~60-URL) workload
+
+Missing key → run **failed** → lock released → the next run can start:
+
+```bash
+pytest tests/test_reliability.py::test_case1_missing_key_fails_releases_lock_then_next_run_starts -q
+```
+
+A missing Excel file returns an error immediately:
+
+```bash
+pytest tests/test_reliability.py::test_case2_missing_excel_returns_error_immediately -q
+```
+
+60 URLs all succeed:
+
+```bash
+pytest tests/test_reliability.py::test_case3_sixty_urls_all_succeed -q
+```
+
+60 URLs with 5 failures → 55 succeed + 5 fail, and the run still completes:
+
+```bash
+pytest tests/test_reliability.py::test_case4_sixty_urls_five_failures_still_completes -q
+```
+
+A background crash marks the run **failed** and releases the lock:
+
+```bash
+pytest tests/test_reliability.py::test_case8_background_crash_marks_run_failed -q
+```
+
+An unwritable output dir makes the run report **failed**:
+
+```bash
+pytest tests/test_reliability.py::test_case9_unwritable_output_dir_reports_failed -q
+```
+
+#### `tests/test_docker_build_context.py` — image hygiene
+
+`.env` is excluded from the Docker build context:
+
+```bash
+pytest tests/test_docker_build_context.py::test_case10_env_excluded_from_docker_build_context -q
+```
+
+`.env.*` variants (e.g. `.env.local`) are excluded from the Docker build context:
+
+```bash
+pytest tests/test_docker_build_context.py::test_case10_env_variants_excluded_from_docker_build_context -q
+```
+
+#### `tests/test_gemini_connectivity.py` — opt-in live check
+
+Verifies the configured Gemini **key + base URL + model** actually work together. Needs `RUN_LIVE_GEMINI=1`; `-s -v` shows the request/result detail:
+
+```bash
+RUN_LIVE_GEMINI=1 pytest tests/test_gemini_connectivity.py::test_gemini_key_url_and_model_are_reachable -s -v
+```
+
+#### `tests/test_live_scrape.py` — opt-in live check
+
+One real bot-protected dealer page returns non-empty body text. Needs `RUN_LIVE_SCRAPE=1`; quote the node ID because it contains a URL in `[...]`:
+
+```bash
+RUN_LIVE_SCRAPE=1 pytest "tests/test_live_scrape.py::test_bot_protected_url_returns_body[https://www.heywardallen.com/new-vehicles/new-vehicle-specials/]" -s -v
+```
+
+A second real page returns non-empty body text:
+
+```bash
+RUN_LIVE_SCRAPE=1 pytest "tests/test_live_scrape.py::test_bot_protected_url_returns_body[https://www.heywardallencadillac.com/new-vehicles/dealer-specials/]" -s -v
+```
+
+> Tip: quote any node ID that contains a URL in `[...]` (as above) so the shell
+> doesn't try to expand the brackets.
+
+### What each file verifies
+
+| Test file | Tests | What it verifies | Why it's useful |
+|-----------|:-----:|------------------|-----------------|
+| `tests/test_offer_types.py` | 4 | Default resolves to `sales_specials`; label/alias normalization; unsupported type raises with the allowed list. | Guards type resolution — the entry point every request goes through. |
+| `tests/test_api.py` | 11 | `/types` listing; default → `sales_specials`; explicit active type; **inactive type → 403**; invalid type → 400; missing Excel → 404; missing key → 500; single-run lock → 409; lock releases after a run / on processor-init failure. | Locks down the HTTP contract and every error code callers depend on. |
+| `tests/test_filtering.py` | 6 | Excel rows filtered by type label; `Homepage`/`Contact Us`/`Map` skipped; `status` column parsed as active/inactive (bool, string, numeric). | Ensures only the intended dealer rows are scraped. |
+| `tests/test_processors.py` | 4 | Sales Specials delegates to the real extraction logic; per-type processor wiring; scrape errors written to the run's `errors/` dir; **same dealer processed twice on the same day writes to separate run folders** (outputs never mix). | Confirms per-type behavior and run-to-run output isolation. |
+| `tests/test_output_paths.py` | 2 | Each type/run writes only under its own run folder (`zip/`, `errors/`). | Prevents two runs' files from colliding. |
+| `tests/test_reliability.py` | 6 | Missing key → run **failed** → lock released → next run starts; **60 URLs all succeed**; **60 URLs with 5 failures → 55 ok + 5 failed, run still completes**; background crash → run **failed**; missing Excel → immediate error; unwritable output dir → **failed**. | Proves the run lifecycle stays reliable at the real ~60-URL workload, including partial failures and crashes. |
+| `tests/test_docker_build_context.py` | 2 | `.dockerignore` excludes `.env` and `.env.*` from the Docker build context. | Stops secrets from being baked into the image. |
+| `tests/test_gemini_connectivity.py` | 1 | *(opt-in)* The configured Gemini **key + base URL + model** actually work together. | Early warning if Gemini changes a URL or retires a model. |
+| `tests/test_live_scrape.py` | 2 | *(opt-in)* Real bot-protected dealer pages return non-empty body text via Playwright. | Verifies the live scraper against real anti-bot walls. |
+
+### Run a single file or test
+
+```bash
+pytest tests/test_api.py -q                                  # one file
+pytest tests/test_api.py::test_inactive_service_returns_403 -q  # one test
+pytest tests/test_reliability.py -q                          # run-lifecycle cases
+pytest -k "sixty_urls" -q                                    # match by name
+```
+
+Useful when iterating on one area — runs only what you're changing instead of the
+whole suite.
+
+### Opt-in live checks
+
+These are **skipped by default** because they hit the real internet / real Gemini.
+Enable them explicitly when you want to validate the live integrations:
+
+```bash
+# Verify the Gemini key, base URL, and model still work together.
+# Fails loudly (instead of every real run failing) if Gemini changed a URL
+# or retired the configured model.
+RUN_LIVE_GEMINI=1 pytest tests/test_gemini_connectivity.py -s -v
+
+# Verify the live scraper clears real bot-protection walls.
+RUN_LIVE_SCRAPE=1 pytest tests/test_live_scrape.py -s -v
+
+# Optionally point the live scrape at your own URLs:
+RUN_LIVE_SCRAPE=1 LIVE_SCRAPE_URLS="https://a.com,https://b.com" \
+  pytest tests/test_live_scrape.py -s -v
+```
+
+`-s` shows the printed diagnostics (page titles, body sizes, error detail) and
+`-v` lists each URL/case by name.

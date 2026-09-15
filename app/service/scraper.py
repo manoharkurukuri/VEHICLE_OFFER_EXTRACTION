@@ -7,8 +7,6 @@ it can be built into a small, single-purpose Lambda container image.
 
 import os
 import re
-import time
-from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -36,10 +34,6 @@ _BLOCK_MARKERS = (
 
 # Cloudflare's interstitial uses exactly "<title>Just a moment...</title>".
 _CHALLENGE_TITLE_RE = re.compile(r"<title[^>]*>\s*just a moment", re.I)
-
-# Extra fresh-session attempts when a bot-protection challenge does not clear;
-# Cloudflare/DataDome passes are probabilistic and often clear on a retry.
-_CHALLENGE_RETRIES = int(os.getenv("SCRAPER_CHALLENGE_RETRIES", "2"))
 
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -69,26 +63,6 @@ def _chromium_args() -> list[str]:
     return _DESKTOP_CHROMIUM_ARGS
 
 
-def _launch_browser(p):
-    """Prefer real Google Chrome on desktop. Anti-bot systems flag Playwright's
-    bundled Chromium far more often, so real Chrome recovers dealers that would
-    otherwise soft-block. Falls back to bundled Chromium if Chrome isn't
-    available (e.g. Lambda). Set SCRAPER_BROWSER_CHANNEL to override the channel
-    (``msedge``, or empty string to force bundled Chromium).
-    """
-    headless = _headless()
-    args = _chromium_args()
-    channel = os.getenv("SCRAPER_BROWSER_CHANNEL")
-    if channel is None and not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
-        channel = "chrome"
-    if channel:
-        try:
-            return p.chromium.launch(headless=headless, args=args, channel=channel)
-        except Exception:
-            pass
-    return p.chromium.launch(headless=headless, args=args)
-
-
 def _headless() -> bool:
     """Headless by default; set SCRAPER_HEADLESS=false to watch the browser."""
     return os.getenv("SCRAPER_HEADLESS", "true").strip().lower() not in {
@@ -98,38 +72,12 @@ def _headless() -> bool:
     }
 
 
-def _proxy() -> dict[str, str] | None:
-    """Route the browser through a proxy when SCRAPER_PROXY is set, e.g.
-    ``http://user:pass@host:port``. A residential proxy is the most reliable way
-    past dealer platforms that withhold offer content from datacenter IPs.
-    Returns ``None`` (direct connection) when unset.
-    """
-    raw = os.getenv("SCRAPER_PROXY", "").strip()
-    if not raw:
-        return None
-    parsed = urlparse(raw)
-    if not parsed.hostname:
-        return None
-    scheme = parsed.scheme or "http"
-    server = f"{scheme}://{parsed.hostname}"
-    if parsed.port:
-        server += f":{parsed.port}"
-    proxy: dict[str, str] = {"server": server}
-    if parsed.username:
-        proxy["username"] = parsed.username
-    if parsed.password:
-        proxy["password"] = parsed.password
-    return proxy
-
-
 # Injected before any page script runs so anti-bot fingerprinting sees a
 # realistic browser instead of an automated one (webdriver flag, missing
 # plugins/languages, headless chrome runtime, permissions API mismatch).
 _STEALTH_INIT_SCRIPT = r"""
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
-Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
 Object.defineProperty(navigator, 'plugins', {
   get: () => [1, 2, 3, 4, 5].map((i) => ({ name: 'Plugin ' + i })),
 });
@@ -386,30 +334,21 @@ def _safe_content(page, retries: int = 5) -> str:
     return ""
 
 
-def fetch_rendered_html(
-    url: str, timeout: int | None = None, require_offers: bool = False
-) -> str:
-    """Load a URL with headless Playwright and return the rendered HTML.
-
-    When ``require_offers`` is set, a page that renders without any offer/vehicle
-    content is rejected so the caller can retry in a fresh session; anti-bot
-    "soft blocks" often serve just the nav/footer shell without the inventory.
-    """
+def fetch_rendered_html(url: str, timeout: int | None = None) -> str:
+    """Load a URL with headless Playwright and return the rendered HTML."""
     timeout = timeout or 60
 
     with sync_playwright() as p:
-        browser = _launch_browser(p)
+        browser = p.chromium.launch(
+            headless=_headless(),
+            args=_chromium_args(),
+        )
         context = browser.new_context(
             user_agent=_USER_AGENT,
             viewport={"width": 1366, "height": 900},
             locale="en-US",
             timezone_id="America/New_York",
-            device_scale_factor=1,
-            is_mobile=False,
-            has_touch=False,
-            color_scheme="light",
             extra_http_headers=_EXTRA_HTTP_HEADERS,
-            proxy=_proxy(),
         )
         page = context.new_page()
         page.add_init_script(_STEALTH_INIT_SCRIPT)
@@ -443,20 +382,12 @@ def fetch_rendered_html(
             _load_dynamic_content(page)
 
             html = _safe_content(page)
-            offers_present = _offers_present(page)
             # Only treat as blocked when the challenge is still up AND no real
             # offer/vehicle content rendered; otherwise a stray marker in the
             # live page would wrongly fail an already-loaded page.
-            if _is_challenge(html) and not offers_present:
+            if _is_challenge(html) and not _offers_present(page):
                 raise ScrapingError(
                     "Bot-protection challenge did not clear in Playwright."
-                )
-            # Anti-bot soft block: the page shell renders (no challenge marker)
-            # but the inventory/offer widget is withheld. Fail so fetch_html can
-            # retry in a fresh session, where the widget usually renders.
-            if require_offers and not offers_present:
-                raise ScrapingError(
-                    "Offer content did not render in Playwright."
                 )
             return html
         finally:
@@ -464,29 +395,13 @@ def fetch_rendered_html(
 
 
 def fetch_html(url: str) -> str:
-    """Fetch the rendered HTML with Playwright.
-
-    Retries in a fresh browser session (up to ``SCRAPER_CHALLENGE_RETRIES`` times)
-    when a bot-protection challenge does not clear, or when the page comes back as
-    an offer-less soft-block shell. These passes are probabilistic and usually
-    succeed on a later attempt. The final attempt is best-effort (returns whatever
-    rendered) so a genuinely empty page is not treated as a hard error.
-    """
-    last_error: ScrapingError | None = None
-    for attempt in range(_CHALLENGE_RETRIES + 1):
-        require_offers = attempt < _CHALLENGE_RETRIES
-        try:
-            return fetch_rendered_html(url, require_offers=require_offers)
-        except ScrapingError as exc:
-            msg = str(exc)
-            if "challenge did not clear" not in msg and "did not render" not in msg:
-                raise
-            last_error = exc
-            if attempt < _CHALLENGE_RETRIES:
-                time.sleep(2)
-        except Exception as exc:
-            raise ScrapingError(f"Playwright scrape failed: {exc}") from exc
-    raise last_error
+    """Fetch the rendered HTML with Playwright."""
+    try:
+        return fetch_rendered_html(url)
+    except ScrapingError:
+        raise
+    except Exception as exc:
+        raise ScrapingError(f"Playwright scrape failed: {exc}") from exc
 
 
 def get_website_content_from_url(url: str) -> dict[str, str]:
